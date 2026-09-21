@@ -1,0 +1,122 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Enum-like fields are stored as String and validated/typed via Zod in
+// src/lib/rules — SQLite has no native enum type in Prisma.
+
+model Affiliate {
+  id String @id @default(cuid())
+
+  // Provenance: where this row came from in the original sheet, and the
+  // untouched original values. Never mutated after import.
+  sheetRowIndex Int?
+  raw           String // JSON: the full original row as a { [header]: value } object
+
+  // Normalized fields (Module A). Each has a companion *_raw when the source
+  // text differs meaningfully from the typed value.
+  name String
+
+  commissionRate Float? // decimal rate, e.g. 0.15 for "15%"
+  commissionRaw  String?
+
+  tier           String? // AAA | AA | A | B | C | D
+  tierRaw        String?
+  tierConfidence String // "high" | "unmapped"
+
+  status        String // ACTIVE | ACTIVE_NO_CONTRACT | INACTIVE | UNKNOWN
+  statusRaw     String?
+  statusFlagged Boolean @default(false) // true if a junk value was coerced to UNKNOWN
+
+  language    String? // BCP-47, e.g. "pt-BR"
+  languageRaw String?
+
+  countryCode         String? // ISO-3166-1 alpha-2
+  countryCodeInferred Boolean @default(false) // true if inferred from phone dial code
+
+  phoneE164 String?
+  phoneRaw  String?
+
+  emails String // JSON: [{ address: string, isPrimary: boolean }]
+
+  importArtifacts String // JSON string[]: field names nulled from #N/A / #ERROR! / junk
+
+  healthScore Int @default(0) // 0-100, recomputed whenever normalization runs
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  issues              Issue[]
+  duplicatesAsA       DuplicateCandidate[] @relation("DuplicateA")
+  duplicatesAsB       DuplicateCandidate[] @relation("DuplicateB")
+  auditEntries        AuditLog[]
+}
+
+model Issue {
+  id String @id @default(cuid())
+
+  affiliateId String
+  affiliate   Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  ruleId   String // e.g. "TIER_TRIM_WHITESPACE"
+  severity String // "blocker" | "warning" | "info"
+  field    String
+  message  String
+
+  status         String @default("open") // "open" | "resolved" | "exception"
+  assignee       String?
+  resolutionNote String?
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([affiliateId])
+  @@index([status])
+}
+
+model DuplicateCandidate {
+  id String @id @default(cuid())
+
+  affiliateAId String
+  affiliateA   Affiliate @relation("DuplicateA", fields: [affiliateAId], references: [id], onDelete: Cascade)
+  affiliateBId String
+  affiliateB   Affiliate @relation("DuplicateB", fields: [affiliateBId], references: [id], onDelete: Cascade)
+
+  matchType       String // "code" | "email" | "phone"
+  matchConfidence Float
+
+  status     String    @default("pending") // "pending" | "merged" | "dismissed"
+  resolvedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  affiliateId String?
+  affiliate   Affiliate? @relation(fields: [affiliateId], references: [id], onDelete: SetNull)
+
+  actor  String // user email
+  action String // e.g. "normalize", "merge", "edit_field"
+  field  String?
+
+  beforeValue String? // JSON
+  afterValue  String? // JSON
+
+  createdAt DateTime @default(now())
+
+  @@index([affiliateId])
+}
