@@ -1,5 +1,10 @@
-import { detectColumnRole, isActiveStatus, parseAmount } from "@/lib/columnRoles";
+"use client";
+
+import { useState } from "react";
+import { decisionBadgeColor, detectColumnRole, isActiveStatus, parseAmount, stageBadgeColor } from "@/lib/columnRoles";
 import { TagIcon } from "@/components/icons";
+
+const LONG_VALUE_THRESHOLD = 80;
 
 const AVATAR_COLORS = ["bg-blue-600/70", "bg-indigo-600/70", "bg-sky-600/70", "bg-cyan-600/70"];
 
@@ -69,6 +74,33 @@ export function CellDisplay({
     );
   }
 
+  if (role === "stage") {
+    if (!value) {
+      return <span className="text-zinc-600">No stage</span>;
+    }
+    return (
+      <span
+        className={`inline-flex cursor-pointer items-center rounded-full border px-2.5 py-1 text-xs font-medium ${stageBadgeColor(value)}`}
+      >
+        {value}
+      </span>
+    );
+  }
+
+  if (role === "decision") {
+    return (
+      <span
+        className={`inline-flex cursor-text items-center rounded-full border px-2.5 py-1 text-xs font-medium ${decisionBadgeColor(value)}`}
+      >
+        {value || "Pending"}
+      </span>
+    );
+  }
+
+  if (role === "sensitive") {
+    return value ? <LongTextCell value={value} /> : <span className="text-zinc-600">&mdash;</span>;
+  }
+
   if (role === "code" && value) {
     return (
       <span
@@ -94,11 +126,50 @@ export function CellDisplay({
     );
   }
 
+  if (!numeric && (value.includes("\n") || value.length > LONG_VALUE_THRESHOLD)) {
+    return <LongTextCell value={value} />;
+  }
+
   return (
     <span
       className={`block cursor-text text-zinc-300 ${numeric ? "text-right tabular-nums" : "text-left"}`}
     >
       {value || <span className="text-zinc-600">&mdash;</span>}
     </span>
+  );
+}
+
+function LongTextCell({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (expanded) {
+    return (
+      <div className="max-w-md">
+        <p className="whitespace-pre-wrap text-zinc-300">{value}</p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(false);
+          }}
+          className="mt-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-white/10"
+        >
+          Hide
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        setExpanded(true);
+      }}
+      className="inline-flex items-center rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-300/90 hover:bg-blue-500/20"
+    >
+      View information
+    </button>
   );
 }

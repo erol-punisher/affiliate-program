@@ -8,6 +8,7 @@ import {
   getSpreadsheetId,
   updateCell,
 } from "@/lib/sheets";
+import { prisma } from "@/lib/db";
 
 function getSheetGid(): string {
   const gid = process.env.SHEET_GID;
@@ -78,6 +79,8 @@ export async function DELETE(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
   const row = Number(body?.row);
+  const email = typeof body?.email === "string" ? body.email.trim() : "";
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
 
   if (!Number.isInteger(row) || row < 0) {
     return NextResponse.json({ error: "row is required" }, { status: 400 });
@@ -86,5 +89,24 @@ export async function DELETE(request: NextRequest) {
   const spreadsheetId = getSpreadsheetId();
   await deleteRow(session.accessToken, spreadsheetId, Number(getSheetGid()), row);
 
-  return NextResponse.json({ ok: true });
+  // Best-effort: this dashboard has no stable id linking a sheet row to a Prisma Affiliate record
+  // (that table is a point-in-time import), so match on email first, then name, and hard-delete
+  // that record too — otherwise onboarding/CRM data for a "deleted" affiliate would linger.
+  let deletedAffiliateId: string | null = null;
+  if (email || name) {
+    // SQLite has no case-insensitive `contains` in Prisma, and email casing in the stored JSON
+    // isn't guaranteed to match the sheet's — filter candidates in JS instead of in the query.
+    const candidates = await prisma.affiliate.findMany({ select: { id: true, name: true, emails: true } });
+    const emailLower = email.toLowerCase();
+    const toDelete =
+      (email && candidates.find((a) => a.emails.toLowerCase().includes(emailLower))) ||
+      (name && candidates.find((a) => a.name.toLowerCase() === name.toLowerCase())) ||
+      null;
+    if (toDelete) {
+      await prisma.affiliate.delete({ where: { id: toDelete.id } });
+      deletedAffiliateId = toDelete.id;
+    }
+  }
+
+  return NextResponse.json({ ok: true, deletedAffiliateId });
 }

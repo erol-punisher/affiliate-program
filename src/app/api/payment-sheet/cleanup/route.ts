@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
-import { deleteRows, getSheetValues, listSheetTabs } from "@/lib/sheets";
+import { batchGetSheetValues, deleteRows, listSheetTabs } from "@/lib/sheets";
 import { findEmptyRowIndices } from "@/lib/sheetCleanup";
 
 function getEnv(name: string): string {
@@ -17,10 +17,15 @@ export async function POST() {
 
   const spreadsheetId = getEnv("PAYMENT_SPREADSHEET_ID");
   const tabs = await listSheetTabs(session.accessToken, spreadsheetId);
+  const allValues = await batchGetSheetValues(
+    session.accessToken,
+    spreadsheetId,
+    tabs.map((tab) => tab.title),
+  );
 
   const results = [];
   for (const tab of tabs) {
-    const { headers, rows } = await getSheetValues(session.accessToken, spreadsheetId, tab.title);
+    const { headers, rows } = allValues[tab.title];
     const emptyRowIndices = findEmptyRowIndices(headers, rows);
 
     if (emptyRowIndices.length > 0) {

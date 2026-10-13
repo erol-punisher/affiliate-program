@@ -15,6 +15,81 @@ datasource db {
 // Enum-like fields are stored as String and validated/typed via Zod in
 // src/lib/rules — SQLite has no native enum type in Prisma.
 
+// Per-person login allowlist, checked in the OAuth callback on top of the
+// coarser ALLOWED_DOMAIN env var check. An empty table means the allowlist
+// isn't enforced at all (falls back to domain-only) — so clearing it out
+// can never lock everyone out by accident.
+model AllowedUser {
+  id    String @id @default(cuid())
+  email String @unique
+
+  addedBy String? // email of whoever added them, for provenance
+
+  createdAt DateTime @default(now())
+}
+
+// Internal documentation entries — SOPs, process notes, decisions — shown as
+// a reverse-chronological timeline in the Documentation section. Deliberately
+// minimal for now (title + free-text body); structure (categories, tags,
+// etc.) to be added once it's clear what's actually needed.
+model DocumentationEntry {
+  id String @id @default(cuid())
+
+  title   String
+  content String // markdown-ish free text
+
+  author String? // email of whoever wrote/last edited it
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Reusable message templates for outreach/onboarding "cadences" — e.g. a
+// WhatsApp Day 0/3/5/7 onboarding sequence, or a cold-outreach follow-up
+// sequence. Each cadence is an ordered list of template steps with plain
+// {{placeholder}} text, meant to be copied straight into WhatsApp/email.
+model TemplateCadence {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  order       Int     @default(0)
+
+  steps TemplateStep[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TemplateStep {
+  id String @id @default(cuid())
+
+  cadenceId String
+  cadence   TemplateCadence @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+
+  label   String // e.g. "Day 0 — Welcome message"
+  content String // plain text with {{placeholder}} tokens
+  order   Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cadenceId])
+}
+
+// Custom pipeline-style stages for the main Affiliates dashboard. An
+// affiliate's assigned stage is stored as plain text in a "Stage" column in
+// the live Google Sheet (that dashboard has no other per-row DB linkage) —
+// renaming or deleting a stage here bulk-syncs that column across the sheet
+// so cells never go stale with a name that no longer exists.
+model AffiliateStage {
+  id    String @id @default(cuid())
+  name  String @unique
+  order Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Affiliate {
   id String @id @default(cuid())
 
@@ -53,6 +128,12 @@ model Affiliate {
 
   healthScore Int @default(0) // 0-100, recomputed whenever normalization runs
 
+  // Real product-usage events, entered by hand for now (no analytics/Shopify
+  // Partners integration exists yet) — drive the Day 30 / Day 60 onboarding
+  // auto-completion checks. Null until the event has actually happened.
+  firstInstallAt      DateTime? // when this affiliate's first referred install was recorded
+  firstPaidMerchantAt DateTime? // when this affiliate's first referred merchant converted to paid
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -60,6 +141,7 @@ model Affiliate {
   duplicatesAsA       DuplicateCandidate[] @relation("DuplicateA")
   duplicatesAsB       DuplicateCandidate[] @relation("DuplicateB")
   auditEntries        AuditLog[]
+  onboardingSteps     OnboardingStep[]
 }
 
 model Issue {
@@ -119,4 +201,173 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([affiliateId])
+}
+
+// Editable default checklist template (Settings > Manage template UI). New
+// steps for an affiliate are seeded from this table at "start onboarding"
+// time; editing the template afterward never rewrites affiliates already
+// mid-flow, since their rows snapshot label/order/targetDays/anchor at
+// creation time.
+model OnboardingStepTemplate {
+  id String @id @default(cuid())
+
+  key   String @unique
+  label String
+  order Int
+
+  targetDays       Int
+  targetDaysAnchor String  @default("step_start") // "step_start" | "approval"
+  // At most one template row has this true — the step whose completedAt other
+  // "approval"-anchored steps measure their target days from.
+  isApprovalAnchor Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Post-signup onboarding checklist for an Affiliate. The default set of steps
+// comes from OnboardingStepTemplate at creation time — `label`, `order`,
+// `targetDays`, `targetDaysAnchor`, and `isApprovalAnchor` are snapshotted
+// onto each row so a later template edit doesn't rewrite history for
+// affiliates already mid-flow. Steps can also be added, renamed, retargeted,
+// reordered, or removed per-affiliate (one-off cases), independent of the
+// template.
+model OnboardingStep {
+  id String @id @default(cuid())
+
+  affiliateId String
+  affiliate   Affiliate @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  stepKey String // matches a key in OnboardingStepTemplate, or a generated key for a per-affiliate custom step
+  label   String
+  order   Int
+
+  status String  @default("not_started") // "not_started" | "in_progress" | "done" | "skipped"
+  owner  String? // affiliate manager responsible for this step
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  targetDays  Int?
+  targetDaysAnchor String  @default("step_start") // "step_start" | "approval"
+  isApprovalAnchor Boolean @default(false)
+  notes       String?
+
+  // True when this step's completion was set by the automatic install/paying-
+  // merchant check rather than a person — cleared the moment a human changes
+  // this step's status themselves. Drives the "Auto" tag in the UI.
+  autoCompleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activity OnboardingActivity[]
+
+  @@unique([affiliateId, stepKey])
+  @@index([affiliateId])
+}
+
+// One entry per field changed on an OnboardingStep — who changed it, what
+// changed, and when — shown as a small activity log in the step's side panel.
+model OnboardingActivity {
+  id String @id @default(cuid())
+
+  stepId String
+  step   OnboardingStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  actor   String // user email
+  message String // human-readable, e.g. "Status changed to Done"
+
+  createdAt DateTime @default(now())
+
+  @@index([stepId])
+}
+
+// CRM pipelines (replacing Bigin). A Lead is a pre-onboarding prospect card,
+// separate from the Affiliate table — once signed, it's expected to graduate
+// into a real Affiliate row rather than living in both places.
+//
+// Two-level structure matching Bigin: a PipelineGroup is a major category
+// (e.g. "Affiliates"), which contains many named sub-pipelines/Pipelines
+// (e.g. "Affiliates Standard", "Arab Influencers - Reach Out") — each its
+// own board with its own stages.
+
+model PipelineGroup {
+  id    String @id @default(cuid())
+  name  String
+  order Int    @default(0)
+
+  pipelines Pipeline[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Pipeline {
+  id    String @id @default(cuid())
+  name  String
+  order Int    @default(0)
+
+  pipelineGroupId String
+  pipelineGroup   PipelineGroup @relation(fields: [pipelineGroupId], references: [id], onDelete: Cascade)
+
+  stages Stage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pipelineGroupId])
+}
+
+model Stage {
+  id    String  @id @default(cuid())
+  name  String
+  order Int
+  color String? // "green" | "red" | null — for win/loss stages like Active/Closed Lost
+
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  leads Lead[]
+
+  createdAt DateTime @default(now())
+
+  @@index([pipelineId])
+}
+
+model Lead {
+  id    String  @id @default(cuid())
+  name  String // "Affiliate Name"
+  email String? // "Email of Contact"
+  notes String? // "Description"
+  order Int     @default(0) // position within its stage column
+
+  // Set when this card is a mirrored copy of another lead (e.g. the
+  // Affiliates Standard overview holding a copy of every affiliate from
+  // every niche/region sub-pipeline). Null for an organic, directly-created
+  // lead. Self-referencing so a copy's source can be looked up or deleted
+  // without touching the original.
+  sourceLeadId String?
+  sourceLead   Lead?   @relation("LeadCopy", fields: [sourceLeadId], references: [id], onDelete: SetNull)
+  copies       Lead[]  @relation("LeadCopy")
+
+  // Fields mirrored from the Bigin "Affiliate Information" record
+  username         String?
+  owner            String?
+  affiliateManager String?
+  country          String?
+  whatsapp         String? // "WA"
+  followerCount    Int?
+  websiteUrl       String?
+  referralLink     String?
+  dateOfReachOut   DateTime?
+  socialsUrl       String? // "URL of Socials"
+  closingDate      DateTime?
+
+  stageId String
+  stage   Stage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stageId])
 }

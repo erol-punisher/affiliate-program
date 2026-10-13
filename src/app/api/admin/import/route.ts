@@ -3,6 +3,7 @@ import { getSessionWithFreshToken } from "@/lib/auth";
 import { getSheetTitleByGid, getSheetValues, getSpreadsheetId } from "@/lib/sheets";
 import { normalizeAffiliateRow, type RawAffiliateRow } from "@/lib/rules";
 import { findDuplicateCandidates } from "@/lib/dedupe";
+import { buildAffiliateMatchIndex, findMatchingAffiliate } from "@/lib/affiliateImportMatch";
 import { prisma } from "@/lib/db";
 
 function getSheetGid(): string {
@@ -12,10 +13,12 @@ function getSheetGid(): string {
 }
 
 /**
- * One-shot import: pulls every row from the configured Google Sheet, runs it
- * through Module A's normalization pipeline, and replaces the database's
- * affiliate/issue/duplicate tables with the result. Re-running this is safe
- * and idempotent — it's a full reset-and-reimport, not a merge.
+ * Syncs the database's affiliate records from the configured Google Sheet, running each row
+ * through Module A's normalization pipeline. Each row updates its existing Affiliate record in
+ * place (matched by email, falling back to exact name) rather than deleting and recreating
+ * everything — a full wipe would cascade-delete onboarding checklists and issues for every
+ * affiliate currently being tracked, which a routine re-sync must never do. Affiliates that exist
+ * in the database but are no longer present in the sheet are left untouched, not deleted.
  */
 export async function POST() {
   const session = await getSessionWithFreshToken();
@@ -27,14 +30,16 @@ export async function POST() {
   const sheetTitle = await getSheetTitleByGid(session.accessToken, spreadsheetId, getSheetGid());
   const { headers, rows } = await getSheetValues(session.accessToken, spreadsheetId, sheetTitle);
 
-  await prisma.auditLog.deleteMany();
-  await prisma.issue.deleteMany();
-  await prisma.duplicateCandidate.deleteMany();
-  await prisma.affiliate.deleteMany();
+  const existing = await prisma.affiliate.findMany({ select: { id: true, name: true, emails: true } });
+  const matchIndex = buildAffiliateMatchIndex(existing);
+  const matchedIds = new Set<string>();
 
   const ruleCounts: Record<string, number> = {};
   const failedRows: { sheetRowIndex: number; name: string; issues: string[] }[] = [];
   const dedupeInputs: { affiliateId: string; code: string | null; primaryEmail: string | null; phoneE164: string | null }[] = [];
+
+  let created = 0;
+  let updated = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const rawRow: RawAffiliateRow = {};
@@ -44,35 +49,48 @@ export async function POST() {
 
     const normalized = normalizeAffiliateRow(rawRow);
 
-    const affiliate = await prisma.affiliate.create({
-      data: {
-        sheetRowIndex: i,
-        raw: JSON.stringify(rawRow),
-        name: normalized.name,
-        commissionRate: normalized.commissionRate,
-        commissionRaw: normalized.commissionRaw,
-        tier: normalized.tier,
-        tierRaw: normalized.tierRaw,
-        tierConfidence: normalized.tierConfidence,
-        status: normalized.status,
-        statusRaw: normalized.statusRaw,
-        statusFlagged: normalized.statusFlagged,
-        language: normalized.language,
-        languageRaw: normalized.languageRaw,
-        countryCode: normalized.countryCode,
-        countryCodeInferred: normalized.countryCodeInferred,
-        phoneE164: normalized.phoneE164,
-        phoneRaw: normalized.phoneRaw,
-        emails: JSON.stringify(normalized.emails),
-        importArtifacts: JSON.stringify(normalized.importArtifacts),
-        healthScore: normalized.healthScore,
-      },
-    });
+    const data = {
+      sheetRowIndex: i,
+      raw: JSON.stringify(rawRow),
+      name: normalized.name,
+      commissionRate: normalized.commissionRate,
+      commissionRaw: normalized.commissionRaw,
+      tier: normalized.tier,
+      tierRaw: normalized.tierRaw,
+      tierConfidence: normalized.tierConfidence,
+      status: normalized.status,
+      statusRaw: normalized.statusRaw,
+      statusFlagged: normalized.statusFlagged,
+      language: normalized.language,
+      languageRaw: normalized.languageRaw,
+      countryCode: normalized.countryCode,
+      countryCodeInferred: normalized.countryCodeInferred,
+      phoneE164: normalized.phoneE164,
+      phoneRaw: normalized.phoneRaw,
+      emails: JSON.stringify(normalized.emails),
+      importArtifacts: JSON.stringify(normalized.importArtifacts),
+      healthScore: normalized.healthScore,
+    };
+
+    const matched = findMatchingAffiliate(matchIndex, { name: normalized.name, emails: normalized.emails });
+
+    let affiliateId: string;
+    if (matched) {
+      await prisma.affiliate.update({ where: { id: matched.id }, data });
+      await prisma.issue.deleteMany({ where: { affiliateId: matched.id } });
+      affiliateId = matched.id;
+      matchedIds.add(affiliateId);
+      updated++;
+    } else {
+      const affiliate = await prisma.affiliate.create({ data });
+      affiliateId = affiliate.id;
+      created++;
+    }
 
     if (normalized.issues.length > 0) {
       await prisma.issue.createMany({
         data: normalized.issues.map((issue) => ({
-          affiliateId: affiliate.id,
+          affiliateId,
           ruleId: issue.ruleId,
           severity: issue.severity,
           field: issue.field,
@@ -91,13 +109,15 @@ export async function POST() {
     }
 
     dedupeInputs.push({
-      affiliateId: affiliate.id,
+      affiliateId,
       code: (rawRow["Affiliate Code"] ?? "").trim().toLowerCase() || null,
       primaryEmail: normalized.emails.find((e) => e.isPrimary)?.address ?? null,
       phoneE164: normalized.phoneE164,
     });
   }
 
+  // Duplicate candidates are recomputed fresh every run — cheap, and not linked to onboarding.
+  await prisma.duplicateCandidate.deleteMany();
   const duplicates = findDuplicateCandidates(dedupeInputs);
   if (duplicates.length > 0) {
     await prisma.duplicateCandidate.createMany({
@@ -110,9 +130,14 @@ export async function POST() {
     });
   }
 
+  const untouched = existing.length - matchedIds.size;
+
   return NextResponse.json({
     ok: true,
     totalRows: rows.length,
+    created,
+    updated,
+    untouched, // existing DB affiliates not found in this sheet pull — left as-is, not deleted
     rowsWithIssues: failedRows.length,
     ruleCounts,
     duplicateCandidates: {

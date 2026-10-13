@@ -8,6 +8,7 @@ import { formatMonthTitle } from "@/lib/monthTabs";
 import { RefreshIcon, SortIcon, TrashIcon, PlusIcon, XIcon } from "@/components/icons";
 import { TopNav } from "@/components/TopNav";
 import { CellDisplay } from "@/components/CellDisplay";
+import { Pagination } from "@/components/Pagination";
 
 type CellStatus = "idle" | "saving" | "saved" | "error";
 
@@ -33,8 +34,12 @@ export function PaymentRecords({ userEmail }: Props) {
   const [data, setData] = useState<PaymentSheetResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sort, setSort] = useState<SortState>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [loadingTab, setLoadingTab] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
+  const [showColumnManager, setShowColumnManager] = useState(false);
+  const [columnsToDelete, setColumnsToDelete] = useState<Set<string>>(new Set());
   const [showUpload, setShowUpload] = useState(false);
   const [uploadMonth, setUploadMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -207,6 +212,47 @@ export function PaymentRecords({ userEmail }: Props) {
     }
   }
 
+  async function deleteColumnsEverywhere(headersToDelete: string[]) {
+    if (headersToDelete.length === 0) return;
+    const list = headersToDelete.map((h) => `"${h}"`).join(", ");
+    const confirmed = window.confirm(
+      `This permanently deletes ${list} from every tab in the payment spreadsheet. This cannot be undone from the app. Continue?`,
+    );
+    if (!confirmed) return;
+
+    setLoadError(null);
+    setCleaningUp(true);
+    try {
+      const res = await fetch("/api/payment-sheet/delete-column", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headers: headersToDelete }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Failed to delete columns (${res.status})`);
+      }
+      const body = await res.json();
+      if (body.totalRemoved === 0) {
+        const sample = body.results[0]?.headersSeen ?? [];
+        window.alert(
+          `Didn't find ${list} in any tab.\n\nHeaders in "${body.results[0]?.title}":\n${sample.map((h: string) => `"${h}"`).join("\n")}`,
+        );
+      } else {
+        window.alert(
+          `Removed ${body.totalRemoved} column(s) total across ${body.results.filter((r: { removedCount: number }) => r.removedCount > 0).length} of ${body.results.length} tab(s).`,
+        );
+      }
+      setColumnsToDelete(new Set());
+      setShowColumnManager(false);
+      await loadSheet(data?.selected.gid);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to delete columns");
+    } finally {
+      setCleaningUp(false);
+    }
+  }
+
   async function submitUpload(csv: string, confirmOverwrite: boolean) {
     const res = await fetch("/api/payment-sheet/upload", {
       method: "POST",
@@ -265,6 +311,15 @@ export function PaymentRecords({ userEmail }: Props) {
     });
   }, [visible, sort, columnTypes]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [visible, sort]);
+
+  const pagedRows = useMemo(
+    () => sortedRows.slice((page - 1) * pageSize, page * pageSize),
+    [sortedRows, page, pageSize],
+  );
+
   function toggleSort(colIndex: number) {
     setSort((prev) => {
       if (!prev || prev.col !== colIndex) return { col: colIndex, dir: "asc" };
@@ -276,10 +331,7 @@ export function PaymentRecords({ userEmail }: Props) {
   const nameColIndex = columnRoles.indexOf("name");
 
   return (
-    <div
-      className="min-h-screen font-sans text-zinc-100"
-      style={{ background: "radial-gradient(ellipse 1200px 600px at 50% -10%, #151b30, #05060a 60%)" }}
-    >
+    <div className="min-h-screen font-sans text-zinc-100">
       <TopNav userEmail={userEmail} />
 
       <main className="flex w-full flex-col gap-6 px-6 py-8">
@@ -318,6 +370,14 @@ export function PaymentRecords({ userEmail }: Props) {
               </button>
               <button
                 type="button"
+                onClick={() => setShowColumnManager((v) => !v)}
+                className="flex items-center gap-2 rounded-lg border border-red-500/20 px-3.5 py-2 text-sm text-red-300/90 transition-colors hover:bg-red-500/10"
+              >
+                <TrashIcon className="h-4 w-4" />
+                Remove columns
+              </button>
+              <button
+                type="button"
                 onClick={() => void deleteEmptyRows()}
                 disabled={cleaningUp}
                 className="flex items-center gap-2 rounded-lg border border-red-500/20 px-3.5 py-2 text-sm text-red-300/90 transition-colors hover:bg-red-500/10 disabled:opacity-50"
@@ -335,6 +395,68 @@ export function PaymentRecords({ userEmail }: Props) {
               </button>
             </div>
           </div>
+
+          {showColumnManager && visible && (
+            <div className="border-b border-white/10 bg-white/[0.02] px-6 py-4">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Select columns to remove from every tab
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {visible.headers.map((header) => {
+                  if (!header) return null;
+                  const checked = columnsToDelete.has(header);
+                  return (
+                    <label
+                      key={header}
+                      className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        checked
+                          ? "border-red-500/40 bg-red-500/15 text-red-300"
+                          : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setColumnsToDelete((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(header)) next.delete(header);
+                            else next.add(header);
+                            return next;
+                          });
+                        }}
+                        className="h-3.5 w-3.5 cursor-pointer"
+                      />
+                      {header}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void deleteColumnsEverywhere([...columnsToDelete])}
+                  disabled={columnsToDelete.size === 0 || cleaningUp}
+                  className="rounded-lg border border-red-500/30 bg-red-500/20 px-3.5 py-2 text-sm text-red-200 transition-colors hover:bg-red-500/30 disabled:opacity-50"
+                >
+                  {cleaningUp
+                    ? "Deleting…"
+                    : `Delete ${columnsToDelete.size || ""} selected column(s)`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowColumnManager(false);
+                    setColumnsToDelete(new Set());
+                  }}
+                  className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-zinc-500 transition-colors hover:text-zinc-300"
+                >
+                  <XIcon className="h-4 w-4" />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {showUpload && (
             <div className="flex flex-wrap items-end gap-3 border-b border-white/10 bg-white/[0.02] px-6 py-4">
@@ -409,35 +531,49 @@ export function PaymentRecords({ userEmail }: Props) {
                       return (
                         <th
                           key={colIndex}
-                          className={`select-none whitespace-nowrap px-6 py-3.5 text-xs font-medium uppercase tracking-wide text-zinc-500 ${
+                          className={`group/col select-none whitespace-nowrap px-6 py-3.5 text-xs font-medium uppercase tracking-wide text-zinc-500 ${
                             isNumericType(columnTypes[colIndex]) ? "text-right" : "text-left"
                           }`}
                         >
-                          <button
-                            type="button"
-                            onClick={() => toggleSort(colIndex)}
-                            className={`inline-flex items-center gap-1 transition-colors hover:text-zinc-300 ${
-                              isNumericType(columnTypes[colIndex]) ? "flex-row-reverse" : ""
-                            }`}
-                          >
-                            {header || `Column ${colIndex + 1}`}
-                            <SortIcon
-                              className={`h-3.5 w-3.5 ${
-                                sort?.col === colIndex ? "text-blue-300/80" : "text-zinc-600"
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(colIndex)}
+                              className={`inline-flex items-center gap-1 transition-colors hover:text-zinc-300 ${
+                                isNumericType(columnTypes[colIndex]) ? "flex-row-reverse" : ""
                               }`}
-                            />
-                          </button>
+                            >
+                              {header || `Column ${colIndex + 1}`}
+                              <SortIcon
+                                className={`h-3.5 w-3.5 ${
+                                  sort?.col === colIndex ? "text-blue-300/80" : "text-zinc-600"
+                                }`}
+                              />
+                            </button>
+                            {header && (
+                              <button
+                                type="button"
+                                title={`Delete "${header}" column from every tab`}
+                                onClick={() => void deleteColumnsEverywhere([header])}
+                                className="opacity-0 transition-opacity hover:text-red-300 group-hover/col:opacity-100"
+                              >
+                                <XIcon className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </span>
                         </th>
                       );
                     })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {sortedRows.map(({ row, index: rowIndex }, position) => (
+                  {pagedRows.map(({ row, index: rowIndex }, localPosition) => {
+                    const position = (page - 1) * pageSize + localPosition;
+                    return (
                     <tr
                       key={rowIndex}
                       className={`transition-colors hover:bg-white/[0.04] ${
-                        position % 2 === 1 ? "bg-white/[0.012]" : ""
+                        localPosition % 2 === 1 ? "bg-white/[0.012]" : ""
                       }`}
                     >
                       <td className="w-12 px-4 py-3.5 text-zinc-500">{position + 1}</td>
@@ -520,9 +656,20 @@ export function PaymentRecords({ userEmail }: Props) {
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={sortedRows.length}
+                onPageChange={setPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size);
+                  setPage(1);
+                }}
+              />
               {sortedRows.length === 0 && (
                 <p className="px-6 py-6 text-sm text-zinc-500">No payment records found.</p>
               )}

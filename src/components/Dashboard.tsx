@@ -3,11 +3,12 @@
 import { useMemo, useState, useEffect } from "react";
 import { detectColumnType, isNumericType, validateCellValue } from "@/lib/columnTypes";
 import { detectColumnRole, parseAmount } from "@/lib/columnRoles";
-import { CheckIcon, ColumnsIcon, DownloadIcon, PlusIcon, RefreshIcon, SortIcon } from "@/components/icons";
+import { CheckIcon, ColumnsIcon, DownloadIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SortIcon, TrashIcon, XIcon } from "@/components/icons";
 import { AddAffiliateModal } from "@/components/AddAffiliateModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { TopNav } from "@/components/TopNav";
 import { CellDisplay } from "@/components/CellDisplay";
+import { Pagination } from "@/components/Pagination";
 
 type SheetData = {
   headers: string[];
@@ -16,6 +17,18 @@ type SheetData = {
 
 type CellStatus = "idle" | "saving" | "saved" | "error";
 type SortState = { col: number; dir: "asc" | "desc" } | null;
+
+type AffiliateStage = { id: string; name: string; order: number };
+
+type ImportResult = {
+  totalRows: number;
+  created: number;
+  updated: number;
+  untouched: number;
+  rowsWithIssues: number;
+  ruleCounts: Record<string, number>;
+  duplicateCandidates: { total: number; byType: { code: number; email: number; phone: number } };
+};
 
 type Props = {
   userEmail: string;
@@ -65,6 +78,9 @@ export function Dashboard({ userEmail }: Props) {
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(loadHiddenColumns);
   const [isColumnsMenuOpen, setIsColumnsMenuOpen] = useState(false);
   const [sort, setSort] = useState<SortState>(null);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
   const [draftValue, setDraftValue] = useState("");
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -72,6 +88,11 @@ export function Dashboard({ userEmail }: Props) {
   const [cellErrors, setCellErrors] = useState<Record<string, { message: string; value: string }>>(
     {},
   );
+  const [stages, setStages] = useState<AffiliateStage[] | null>(null);
+  const [showStageManager, setShowStageManager] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const columnTypes = useMemo(() => {
     if (!data) return [];
@@ -87,6 +108,7 @@ export function Dashboard({ userEmail }: Props) {
 
   useEffect(() => {
     void loadSheet();
+    void loadStages();
   }, []);
 
   useEffect(() => {
@@ -130,11 +152,114 @@ export function Dashboard({ userEmail }: Props) {
     }
   }
 
+  async function runImport() {
+    setIsImporting(true);
+    setImportError(null);
+    try {
+      const res = await fetch("/api/admin/import", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Import failed (${res.status})`);
+      }
+      setImportResult(await res.json());
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function loadStages() {
+    try {
+      const res = await fetch("/api/affiliate-stages");
+      if (!res.ok) throw new Error();
+      const body = await res.json();
+      setStages(body.stages ?? []);
+    } catch {
+      setStages([]);
+    }
+  }
+
+  async function addStage(name: string) {
+    try {
+      const res = await fetch("/api/affiliate-stages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error();
+      const body = await res.json();
+      setStages((prev) => [...(prev ?? []), body.stage]);
+      // The "Stage" column may have just been created for the first time.
+      await loadSheet();
+    } catch {
+      await loadStages();
+    }
+  }
+
+  async function updateStage(id: string, patch: Record<string, string | number>) {
+    setStages((prev) => prev?.map((s) => (s.id === id ? ({ ...s, ...patch } as AffiliateStage) : s)) ?? null);
+    try {
+      const res = await fetch(`/api/affiliate-stages/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error();
+      if ("name" in patch) await loadSheet(); // renamed cells were bulk-synced server-side
+    } catch {
+      await loadStages();
+    }
+  }
+
+  async function deleteStage(id: string) {
+    setStages((prev) => prev?.filter((s) => s.id !== id) ?? null);
+    try {
+      const res = await fetch(`/api/affiliate-stages/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      await loadSheet(); // cleared cells were bulk-synced server-side
+    } catch {
+      await loadStages();
+    }
+  }
+
+  async function reorderStages(orderedIds: string[]) {
+    setStages((prev) => {
+      if (!prev) return prev;
+      const byId = new Map(prev.map((s) => [s.id, s]));
+      return orderedIds.map((id, i) => ({ ...byId.get(id)!, order: i }));
+    });
+    try {
+      const results = await Promise.all(
+        orderedIds.map((id, i) =>
+          fetch(`/api/affiliate-stages/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: i }),
+          }),
+        ),
+      );
+      if (results.some((r) => !r.ok)) throw new Error();
+    } catch {
+      await loadStages();
+    }
+  }
+
   const filteredRows = useMemo(() => {
     if (!data) return [];
-    const base = data.rows.map((row, index) => ({ row, index }));
+    let base = data.rows.map((row, index) => ({ row, index }));
 
     const nameCol = columnRoles.indexOf("name");
+    const query = search.trim().toLowerCase();
+    if (query) {
+      // Match on the affiliate's name only — not every column (manager, notes, email, etc.),
+      // which produced confusing, unrelated results for a search meant to find a person by name.
+      base =
+        nameCol !== -1
+          ? base.filter(({ row }) => (row[nameCol] ?? "").toLowerCase().includes(query))
+          : base.filter(({ row }) => row.some((cell) => cell.toLowerCase().includes(query)));
+    }
+
     const defaultSortCol = nameCol !== -1 ? nameCol : 0;
     const effectiveSort =
       sort ?? (data.headers.length > 0 ? { col: defaultSortCol, dir: "asc" as const } : null);
@@ -150,7 +275,16 @@ export function Dashboard({ userEmail }: Props) {
       if (numeric) return (parseAmount(av) - parseAmount(bv)) * factor;
       return av.localeCompare(bv) * factor;
     });
-  }, [data, sort, columnTypes, columnRoles]);
+  }, [data, sort, columnTypes, columnRoles, search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [data, sort, hiddenColumns, search]);
+
+  const pagedRows = useMemo(
+    () => filteredRows.slice((page - 1) * pageSize, page * pageSize),
+    [filteredRows, page, pageSize],
+  );
 
   function toggleRowSelected(rowIndex: number) {
     setSelectedRows((prev) => {
@@ -356,6 +490,9 @@ export function Dashboard({ userEmail }: Props) {
     setDeleteError(null);
     setIsDeleting(true);
 
+    const emailColIndex = columnRoles.indexOf("email");
+    const nameColIndexForDelete = columnRoles.indexOf("name");
+
     try {
       // Delete from the bottom up so earlier row indices stay valid mid-batch.
       const rowIndices = [...selectedRows].sort((a, b) => b - a);
@@ -363,7 +500,11 @@ export function Dashboard({ userEmail }: Props) {
         const res = await fetch("/api/sheet", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ row: rowIndex }),
+          body: JSON.stringify({
+            row: rowIndex,
+            email: emailColIndex !== -1 ? data.rows[rowIndex][emailColIndex] : undefined,
+            name: nameColIndexForDelete !== -1 ? data.rows[rowIndex][nameColIndexForDelete] : undefined,
+          }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -384,10 +525,7 @@ export function Dashboard({ userEmail }: Props) {
   const nameColIndex = columnRoles.indexOf("name");
 
   return (
-    <div
-      className="min-h-screen font-sans text-zinc-100"
-      style={{ background: "radial-gradient(ellipse 1200px 600px at 50% -10%, #151b30, #05060a 60%)" }}
-    >
+    <div className="min-h-screen font-sans text-zinc-100">
       <TopNav userEmail={userEmail} />
 
       <main className="flex w-full flex-col gap-6 px-6 py-8">
@@ -398,7 +536,17 @@ export function Dashboard({ userEmail }: Props) {
             <p className="mt-0.5 text-sm text-zinc-500">Manage your affiliates</p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-2 border-b border-white/10 px-6 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-6 py-4">
+            <div className="relative w-full max-w-xs">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search affiliates..."
+                className="w-full rounded-lg border border-white/10 bg-white/5 py-2 pl-9 pr-3 text-sm text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              />
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -425,6 +573,24 @@ export function Dashboard({ userEmail }: Props) {
               >
                 <DownloadIcon className="h-4 w-4" />
                 Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowStageManager(true)}
+                className="flex items-center gap-2 rounded-lg border border-white/10 px-3.5 py-2 text-sm text-zinc-300 transition-colors hover:bg-white/5"
+              >
+                <PencilIcon className="h-4 w-4" />
+                Manage stages
+              </button>
+              <button
+                type="button"
+                onClick={() => void runImport()}
+                disabled={isImporting}
+                title="Syncs the database (used by Onboarding and CRM) from this sheet — new affiliates become available, existing ones are refreshed. Doesn't delete anyone."
+                className="flex items-center gap-2 rounded-lg border border-white/10 px-3.5 py-2 text-sm text-zinc-300 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshIcon className="h-4 w-4" />
+                {isImporting ? "Importing…" : "Import affiliates"}
               </button>
               <div className="relative">
                 <button
@@ -520,6 +686,12 @@ export function Dashboard({ userEmail }: Props) {
             </p>
           )}
 
+          {importError && (
+            <p className="mx-6 mt-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400">
+              {importError}
+            </p>
+          )}
+
           {!data && !loadError && (
             <div className="p-6">
               <div className="animate-pulse space-y-3">
@@ -586,11 +758,13 @@ export function Dashboard({ userEmail }: Props) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredRows.map(({ row, index: rowIndex }, position) => (
+                  {pagedRows.map(({ row, index: rowIndex }, localPosition) => {
+                    const position = (page - 1) * pageSize + localPosition;
+                    return (
                     <tr
                       key={rowIndex}
                       className={`group transition-colors hover:bg-white/[0.04] ${
-                        position % 2 === 1 ? "bg-white/[0.012]" : ""
+                        localPosition % 2 === 1 ? "bg-white/[0.012]" : ""
                       }`}
                     >
                       <td className="w-12 px-4 py-3.5 text-zinc-500">{position + 1}</td>
@@ -623,7 +797,26 @@ export function Dashboard({ userEmail }: Props) {
                             }`}
                             onClick={() => !isEditing && startEditing(rowIndex, colIndex, cell)}
                           >
-                            {isEditing ? (
+                            {isEditing && role === "stage" ? (
+                              <select
+                                autoFocus
+                                value={cell}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setEditingCell(null);
+                                  if (value !== cell) void saveCell(rowIndex, colIndex, value, cell);
+                                }}
+                                onBlur={() => setEditingCell(null)}
+                                className="w-full rounded border border-blue-500/70 bg-[#0f141f] px-1.5 py-1 text-sm text-zinc-100 outline-none"
+                              >
+                                <option value="" className="bg-[#10141f]">No stage</option>
+                                {(stages ?? []).map((s) => (
+                                  <option key={s.id} value={s.name} className="bg-[#10141f]">
+                                    {s.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : isEditing ? (
                               <div>
                                 <input
                                   autoFocus
@@ -685,9 +878,20 @@ export function Dashboard({ userEmail }: Props) {
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={filteredRows.length}
+                onPageChange={setPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size);
+                  setPage(1);
+                }}
+              />
               {filteredRows.length === 0 && (
                 <p className="px-6 py-6 text-sm text-zinc-500">No matching rows.</p>
               )}
@@ -737,7 +941,7 @@ export function Dashboard({ userEmail }: Props) {
           title="Delete affiliate?"
           message={`Delete ${selectedRows.size} affiliate${
             selectedRows.size > 1 ? "s" : ""
-          }? This cannot be undone.`}
+          }? This removes them from the sheet and permanently deletes their tracked data (onboarding, issues, etc.) if any exists. This cannot be undone.`}
           confirmLabel="Delete"
           confirmingLabel="Deleting…"
           confirming={isDeleting}
@@ -745,6 +949,245 @@ export function Dashboard({ userEmail }: Props) {
           onConfirm={() => void confirmDeleteSelected()}
         />
       )}
+
+      {showStageManager && (
+        <StageManagerModal
+          stages={stages}
+          onClose={() => setShowStageManager(false)}
+          onAdd={(name) => void addStage(name)}
+          onUpdate={(id, patch) => void updateStage(id, patch)}
+          onDelete={(id) => void deleteStage(id)}
+          onReorder={(orderedIds) => void reorderStages(orderedIds)}
+        />
+      )}
+
+      {importResult && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setImportResult(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-xl border border-white/10 bg-[#10141f] shadow-2xl shadow-black/60">
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <h3 className="text-sm font-semibold text-zinc-100">Import complete</h3>
+              <button
+                type="button"
+                onClick={() => setImportResult(null)}
+                className="text-zinc-500 transition-colors hover:text-zinc-300"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-3 p-5 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">Rows read</p>
+                  <p className="mt-0.5 text-lg font-semibold text-zinc-100">{importResult.totalRows}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">New affiliates</p>
+                  <p className="mt-0.5 text-lg font-semibold text-emerald-300">{importResult.created}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">Updated</p>
+                  <p className="mt-0.5 text-lg font-semibold text-blue-300">{importResult.updated}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">Rows with issues</p>
+                  <p className="mt-0.5 text-lg font-semibold text-amber-300">{importResult.rowsWithIssues}</p>
+                </div>
+              </div>
+              {importResult.untouched > 0 && (
+                <p className="text-xs text-zinc-500">
+                  {importResult.untouched} affiliate{importResult.untouched === 1 ? "" : "s"} already in the
+                  database weren&apos;t found in this sheet pull — left untouched, not deleted.
+                </p>
+              )}
+              {importResult.duplicateCandidates.total > 0 && (
+                <p className="text-xs text-zinc-500">
+                  {importResult.duplicateCandidates.total} possible duplicate pair
+                  {importResult.duplicateCandidates.total === 1 ? "" : "s"} flagged (by code/email/phone).
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StageManagerModal({
+  stages,
+  onClose,
+  onAdd,
+  onUpdate,
+  onDelete,
+  onReorder,
+}: {
+  stages: AffiliateStage[] | null;
+  onClose: () => void;
+  onAdd: (name: string) => void;
+  onUpdate: (id: string, patch: Record<string, string | number>) => void;
+  onDelete: (id: string) => void;
+  onReorder: (orderedIds: string[]) => void;
+}) {
+  const [newName, setNewName] = useState("");
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+
+  function handleDrop(targetId: string) {
+    if (!draggedId || draggedId === targetId || !stages) return;
+    const ids = stages.map((s) => s.id);
+    const fromIndex = ids.indexOf(draggedId);
+    const toIndex = ids.indexOf(targetId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const [moved] = ids.splice(fromIndex, 1);
+    ids.splice(toIndex, 0, moved);
+    onReorder(ids);
+  }
+
+  function submitNewStage() {
+    const name = newName.trim();
+    if (name) onAdd(name);
+    setNewName("");
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-white/10 bg-[#10141f] shadow-2xl shadow-black/60">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-6 py-4">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-100">Manage affiliate stages</h3>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Custom pipeline stages for affiliates, stored in a &quot;Stage&quot; column in the sheet. Renaming
+              or deleting a stage updates every affiliate currently assigned to it.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200">
+            <XIcon className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {stages === null ? (
+            <p className="text-sm text-zinc-500">Loading…</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {stages.length === 0 && (
+                <p className="pb-2 text-sm text-zinc-500">No stages yet — add one below.</p>
+              )}
+              {stages.map((stage) => {
+                const isDragged = draggedId === stage.id;
+                const isHovered = draggedId !== null && draggedId !== stage.id && dragOverId === stage.id;
+                return (
+                  <div
+                    key={stage.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      setDraggedId(stage.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedId(null);
+                      setDragOverId(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (draggedId && draggedId !== stage.id) {
+                        e.preventDefault();
+                        if (dragOverId !== stage.id) setDragOverId(stage.id);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleDrop(stage.id);
+                      setDraggedId(null);
+                      setDragOverId(null);
+                    }}
+                    className={`flex cursor-grab items-center gap-3 rounded-lg border px-3 py-2.5 transition-all duration-150 active:cursor-grabbing ${
+                      isDragged
+                        ? "scale-95 border-white/10 opacity-40"
+                        : isHovered
+                          ? "scale-[1.01] border-blue-500/50 ring-2 ring-blue-500/40"
+                          : "border-white/10 bg-white/[0.02]"
+                    }`}
+                  >
+                    <input
+                      type="text"
+                      defaultValue={stage.name}
+                      onBlur={(e) => {
+                        const name = e.target.value.trim();
+                        if (name && name !== stage.name) onUpdate(stage.id, { name });
+                        else e.target.value = stage.name;
+                      }}
+                      className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-zinc-100 outline-none focus:border-white/10 focus:bg-white/5"
+                    />
+                    {confirmingDeleteId === stage.id ? (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDelete(stage.id);
+                            setConfirmingDeleteId(null);
+                          }}
+                          className="rounded-md bg-red-600 px-2 py-1 text-[10px] font-medium text-zinc-100 transition-colors hover:bg-red-500"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDeleteId(null)}
+                          className="rounded-md border border-white/10 px-2 py-1 text-[10px] text-zinc-300 transition-colors hover:bg-white/5"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingDeleteId(stage.id)}
+                        className="shrink-0 text-zinc-500 transition-colors hover:text-red-400"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="mt-2 flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitNewStage();
+                  }}
+                  placeholder="New stage name…"
+                  className="w-full rounded-lg border border-dashed border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                />
+                <button
+                  type="button"
+                  onClick={submitNewStage}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-zinc-100 transition-colors hover:bg-blue-600"
+                >
+                  <PlusIcon className="h-3 w-3" />
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
