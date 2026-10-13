@@ -144,6 +144,8 @@ function daySinceApprovalLabel(steps: OnboardingStep[]): string {
   return `Day ${days}`;
 }
 
+const AFFILIATE_MANAGERS = ["Erol", "Kenneth", "Angelica", "Kemal", "Felipe"];
+
 function assignedManager(steps: OnboardingStep[]): string {
   const approval = steps.find((s) => s.stepKey === APPROVAL_STEP_KEY);
   return approval?.owner || "Unassigned";
@@ -625,6 +627,7 @@ export function OnboardingBoard({ userEmail }: Props) {
                 affiliate={a}
                 onSelectStep={setEditingStep}
                 onUpdateEvents={(affiliateId, patch) => void updateAffiliateEvents(affiliateId, patch)}
+                onUpdateStep={(stepId, affiliateId, patch) => void updateStep(stepId, affiliateId, patch)}
                 onAddStep={(affiliateId, label) => void addStep(affiliateId, label)}
                 onReorderSteps={(affiliateId, orderedIds) => void reorderSteps(affiliateId, orderedIds)}
                 onRemove={(affiliateId) => void removeFromOnboarding(affiliateId)}
@@ -759,6 +762,7 @@ function AffiliateOnboardingCard({
   affiliate,
   onSelectStep,
   onUpdateEvents,
+  onUpdateStep,
   onAddStep,
   onReorderSteps,
   onRemove,
@@ -766,12 +770,17 @@ function AffiliateOnboardingCard({
   affiliate: OnboardingAffiliate;
   onSelectStep: (step: OnboardingStep) => void;
   onUpdateEvents: (affiliateId: string, patch: Record<string, string | null>) => void;
+  onUpdateStep: (stepId: string, affiliateId: string, patch: Record<string, string | null>) => void;
   onAddStep: (affiliateId: string, label: string) => void;
   onReorderSteps: (affiliateId: string, orderedStepIds: string[]) => void;
   onRemove: (affiliateId: string) => void;
 }) {
   const steps = affiliate.onboardingSteps;
   const current = getCurrentStepStatus(steps);
+  // The manager lives on the approval step's owner, same as the step panel and the manager filter.
+  const approvalStep = steps.find((s) => s.stepKey === APPROVAL_STEP_KEY);
+  const manager = approvalStep?.owner ?? "";
+  const managerOptions = manager && !AFFILIATE_MANAGERS.includes(manager) ? [...AFFILIATE_MANAGERS, manager] : AFFILIATE_MANAGERS;
 
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [dragOverStepId, setDragOverStepId] = useState<string | null>(null);
@@ -842,7 +851,23 @@ function AffiliateOnboardingCard({
           </div>
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-          <span>{assignedManager(steps)}</span>
+          {approvalStep ? (
+            <select
+              value={manager}
+              onChange={(e) => onUpdateStep(approvalStep.id, affiliate.id, { owner: e.target.value || null })}
+              title="Affiliate manager"
+              className={`-mx-1 cursor-pointer rounded border border-transparent bg-transparent px-1 py-0.5 text-xs outline-none transition-colors hover:border-white/10 hover:bg-white/5 focus:ring-1 focus:ring-blue-500/50 ${manager ? "text-zinc-300" : "text-zinc-500"}`}
+            >
+              <option value="" className="bg-[#10141f]">Unassigned</option>
+              {managerOptions.map((m) => (
+                <option key={m} value={m} className="bg-[#10141f]">
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span>{assignedManager(steps)}</span>
+          )}
           {affiliate.countryCode && (
             <>
               <span className="text-zinc-700">·</span>
