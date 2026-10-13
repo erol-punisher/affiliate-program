@@ -25,6 +25,10 @@ async function main() {
     pipeline: await prisma.pipeline.findMany(),
     stage: await prisma.stage.findMany(),
     lead: await prisma.lead.findMany(),
+    allowedUser: await prisma.allowedUser.findMany(),
+    documentationEntry: await prisma.documentationEntry.findMany(),
+    templateCadence: await prisma.templateCadence.findMany(),
+    templateStep: await prisma.templateStep.findMany(),
   };
 
   const outPath = `${__dirname}/sqlite-export-${new Date().toISOString().slice(0, 10)}.json`;

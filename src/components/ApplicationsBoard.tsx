@@ -436,10 +436,10 @@ export function ApplicationsBoard({ userEmail }: Props) {
                   key={group.key}
                   type="button"
                   onClick={() => setSelectedGroup(group.key)}
-                  className={`flex aspect-square w-[18vw] min-w-[180px] max-w-[280px] flex-col items-center justify-center gap-3 rounded-full border-2 text-center transition-transform hover:scale-105 ${decisionBadgeColor(group.key)}`}
+                  className={`flex aspect-square w-[19vw] min-w-[200px] max-w-[380px] flex-col items-center justify-center gap-4 rounded-full border-2 text-center transition-transform hover:scale-105 ${decisionBadgeColor(group.key)}`}
                 >
-                  <span className="text-5xl font-semibold">{count}</span>
-                  <span className="px-6 text-sm font-medium leading-tight">{group.label}</span>
+                  <span className="text-6xl font-semibold">{count}</span>
+                  <span className="px-8 text-base font-medium leading-tight">{group.label}</span>
                 </button>
               );
             })}
