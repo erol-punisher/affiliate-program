@@ -42,6 +42,10 @@ async function main() {
     ["pipeline", "pipeline"],
     ["stage", "stage"],
     ["lead", "lead"],
+    ["allowedUser", "allowedUser"],
+    ["documentationEntry", "documentationEntry"],
+    ["templateCadence", "templateCadence"],
+    ["templateStep", "templateStep"],
   ];
 
   for (const [key, model] of order) {
