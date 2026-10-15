@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { parsePipelineCategory } from "@/lib/pipelineCategory";
 
 export async function POST(request: NextRequest) {
   const session = await getSessionWithFreshToken();
@@ -31,6 +32,7 @@ export async function POST(request: NextRequest) {
       pipelineGroupId,
       name,
       order: (maxOrder._max.order ?? -1) + 1,
+      category: parsePipelineCategory(body?.category) ?? null,
       stages: {
         create: templateStages.map((s) => ({ name: s.name, order: s.order, color: s.color })),
       },

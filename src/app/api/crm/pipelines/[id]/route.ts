@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { parsePipelineCategory } from "@/lib/pipelineCategory";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSessionWithFreshToken();
@@ -11,9 +12,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params;
   const body = await request.json().catch(() => null);
 
-  const data: { name?: string; order?: number } = {};
+  const data: { name?: string; order?: number; category?: string | null } = {};
   if (typeof body?.name === "string" && body.name.trim()) data.name = body.name.trim();
   if (typeof body?.order === "number") data.order = body.order;
+  const category = parsePipelineCategory(body?.category);
+  if (category !== undefined) data.category = category;
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });

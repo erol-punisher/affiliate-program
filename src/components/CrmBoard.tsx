@@ -9,6 +9,7 @@ import { LeadModal, type LeadFormValues, EMPTY_LEAD_FORM } from "@/components/Le
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { LeadQuickViewPanel, type EditableLeadField } from "@/components/LeadQuickViewPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
 
 type Lead = {
   id: string;
@@ -43,6 +44,7 @@ type Pipeline = {
   id: string;
   name: string;
   order: number;
+  category: string | null;
   stages: Stage[];
 };
 
@@ -86,6 +88,7 @@ export function CrmBoard({ userEmail }: Props) {
   const [addingPipeline, setAddingPipeline] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState("");
   const [cloneStagesFrom, setCloneStagesFrom] = useState("");
+  const [newPipelineCategory, setNewPipelineCategory] = useState("regional");
 
   const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
   const [draggedStageId, setDraggedStageId] = useState<string | null>(null);
@@ -98,6 +101,7 @@ export function CrmBoard({ userEmail }: Props) {
 
   const [renamingPipeline, setRenamingPipeline] = useState(false);
   const [renamingPipelineName, setRenamingPipelineName] = useState("");
+  const [renamingPipelineCategory, setRenamingPipelineCategory] = useState("");
   const [confirmDeletePipeline, setConfirmDeletePipeline] = useState(false);
   const [deletingPipeline, setDeletingPipeline] = useState(false);
 
@@ -187,6 +191,7 @@ export function CrmBoard({ userEmail }: Props) {
         body: JSON.stringify({
           pipelineGroupId: activeGroup.id,
           name,
+          category: newPipelineCategory || null,
           cloneStagesFrom: cloneStagesFrom || undefined,
         }),
       });
@@ -455,7 +460,7 @@ export function CrmBoard({ userEmail }: Props) {
       const res = await fetch(`/api/crm/pipelines/${activePipeline.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, category: renamingPipelineCategory || null }),
       });
       if (!res.ok) throw new Error();
       setRenamingPipeline(false);
@@ -669,11 +674,27 @@ export function CrmBoard({ userEmail }: Props) {
                     onChange={(e) => setActivePipelineId(e.target.value)}
                     className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-200 outline-none focus:ring-1 focus:ring-blue-500/50"
                   >
-                    {activeGroup.pipelines.map((p) => (
-                      <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
-                        {p.name}
-                      </option>
-                    ))}
+                    {/* Main overview pipelines (no category) first, then one section per category */}
+                    {activeGroup.pipelines
+                      .filter((p) => !PIPELINE_CATEGORIES.some((c) => c.value === p.category))
+                      .map((p) => (
+                        <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
+                          {p.name}
+                        </option>
+                      ))}
+                    {PIPELINE_CATEGORIES.map((c) => {
+                      const inCategory = activeGroup.pipelines.filter((p) => p.category === c.value);
+                      if (inCategory.length === 0) return null;
+                      return (
+                        <optgroup key={c.value} label={c.label} className="bg-[#10141f] text-zinc-500">
+                          {inCategory.map((p) => (
+                            <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
+                              {p.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
                   </select>
                 )}
 
@@ -684,6 +705,7 @@ export function CrmBoard({ userEmail }: Props) {
                       onClick={() => {
                         setRenamingPipeline(true);
                         setRenamingPipelineName(activePipeline.name);
+                        setRenamingPipelineCategory(activePipeline.category ?? "");
                       }}
                       title="Rename sub-pipeline"
                       className="text-zinc-500 transition-colors hover:text-zinc-200"
@@ -712,6 +734,18 @@ export function CrmBoard({ userEmail }: Props) {
                       }}
                       className="rounded-md border border-blue-500/50 bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none"
                     />
+                    <select
+                      value={renamingPipelineCategory}
+                      onChange={(e) => setRenamingPipelineCategory(e.target.value)}
+                      className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 outline-none"
+                    >
+                      <option value="" className="bg-[#10141f]">Main (top of list)</option>
+                      {PIPELINE_CATEGORIES.map((c) => (
+                        <option key={c.value} value={c.value} className="bg-[#10141f]">
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={() => void renamePipeline()}
@@ -738,6 +772,18 @@ export function CrmBoard({ userEmail }: Props) {
                       placeholder="Sub-pipeline name"
                       className="rounded-md border border-blue-500/50 bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none"
                     />
+                    <select
+                      value={newPipelineCategory}
+                      onChange={(e) => setNewPipelineCategory(e.target.value)}
+                      className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 outline-none"
+                    >
+                      {PIPELINE_CATEGORIES.map((c) => (
+                        <option key={c.value} value={c.value} className="bg-[#10141f]">
+                          {c.label}
+                        </option>
+                      ))}
+                      <option value="" className="bg-[#10141f]">Main (top of list)</option>
+                    </select>
                     <select
                       value={cloneStagesFrom}
                       onChange={(e) => setCloneStagesFrom(e.target.value)}

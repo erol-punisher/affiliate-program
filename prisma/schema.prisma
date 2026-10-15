@@ -306,6 +306,8 @@ model Pipeline {
   id    String @id @default(cuid())
   name  String
   order Int    @default(0)
+  // "regional" | "campaign", or null for a main overview pipeline (e.g. Affiliates Standard)
+  category String?
 
   pipelineGroupId String
   pipelineGroup   PipelineGroup @relation(fields: [pipelineGroupId], references: [id], onDelete: Cascade)
