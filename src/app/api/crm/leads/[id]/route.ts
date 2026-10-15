@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { parseOptionalDate, parseOptionalInt, parseOptionalString } from "@/lib/crmLead";
+import { recordStageEvent } from "@/lib/outreachStats";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSessionWithFreshToken();
@@ -66,7 +67,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  const lead = await prisma.lead.update({ where: { id }, data });
+  const lead = await prisma.$transaction(async (tx) => {
+    const before = data.stageId
+      ? await tx.lead.findUnique({ where: { id }, select: { stageId: true, stage: { select: { name: true } } } })
+      : null;
+    const updated = await tx.lead.update({ where: { id }, data });
+    if (before && data.stageId && before.stageId !== data.stageId) {
+      await recordStageEvent(tx, { leadId: id, toStageId: data.stageId, fromStageName: before.stage.name, actor: session.email });
+    }
+    return updated;
+  });
   return NextResponse.json({ lead });
 }
 

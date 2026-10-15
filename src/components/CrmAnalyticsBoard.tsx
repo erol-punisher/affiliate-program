@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 import { ArrowLeftIcon } from "@/components/icons";
+import { WeeklyOutreachSection } from "@/components/WeeklyOutreachSection";
 
 type Props = {
   userEmail: string;
@@ -108,9 +109,11 @@ export function CrmAnalyticsBoard({ userEmail }: Props) {
           </Link>
           <h1 className="mt-2 text-xl font-semibold tracking-tight text-zinc-100">Pipeline analytics</h1>
           <p className="mt-0.5 text-sm text-zinc-500">
-            Stage distribution and win/loss conversion across your pipelines
+            Weekly outreach against targets, plus stage distribution and win/loss conversion across your pipelines
           </p>
         </div>
+
+        <WeeklyOutreachSection />
 
         {error && (
           <p className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>

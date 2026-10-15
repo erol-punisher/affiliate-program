@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { parseOptionalDate, parseOptionalInt, parseOptionalString } from "@/lib/crmLead";
+import { recordStageEvent } from "@/lib/outreachStats";
 
 export async function POST(request: NextRequest) {
   const session = await getSessionWithFreshToken();
@@ -22,25 +23,29 @@ export async function POST(request: NextRequest) {
     _max: { order: true },
   });
 
-  const lead = await prisma.lead.create({
-    data: {
-      stageId,
-      name,
-      order: (maxOrder._max.order ?? -1) + 1,
-      email: parseOptionalString(body?.email) ?? null,
-      notes: parseOptionalString(body?.notes) ?? null,
-      username: parseOptionalString(body?.username) ?? null,
-      owner: parseOptionalString(body?.owner) ?? null,
-      affiliateManager: parseOptionalString(body?.affiliateManager) ?? null,
-      country: parseOptionalString(body?.country) ?? null,
-      whatsapp: parseOptionalString(body?.whatsapp) ?? null,
-      followerCount: parseOptionalInt(body?.followerCount) ?? null,
-      websiteUrl: parseOptionalString(body?.websiteUrl) ?? null,
-      referralLink: parseOptionalString(body?.referralLink) ?? null,
-      dateOfReachOut: parseOptionalDate(body?.dateOfReachOut) ?? null,
-      socialsUrl: parseOptionalString(body?.socialsUrl) ?? null,
-      closingDate: parseOptionalDate(body?.closingDate) ?? null,
-    },
+  const lead = await prisma.$transaction(async (tx) => {
+    const created = await tx.lead.create({
+      data: {
+        stageId,
+        name,
+        order: (maxOrder._max.order ?? -1) + 1,
+        email: parseOptionalString(body?.email) ?? null,
+        notes: parseOptionalString(body?.notes) ?? null,
+        username: parseOptionalString(body?.username) ?? null,
+        owner: parseOptionalString(body?.owner) ?? null,
+        affiliateManager: parseOptionalString(body?.affiliateManager) ?? null,
+        country: parseOptionalString(body?.country) ?? null,
+        whatsapp: parseOptionalString(body?.whatsapp) ?? null,
+        followerCount: parseOptionalInt(body?.followerCount) ?? null,
+        websiteUrl: parseOptionalString(body?.websiteUrl) ?? null,
+        referralLink: parseOptionalString(body?.referralLink) ?? null,
+        dateOfReachOut: parseOptionalDate(body?.dateOfReachOut) ?? null,
+        socialsUrl: parseOptionalString(body?.socialsUrl) ?? null,
+        closingDate: parseOptionalDate(body?.closingDate) ?? null,
+      },
+    });
+    await recordStageEvent(tx, { leadId: created.id, toStageId: stageId, fromStageName: null, actor: session.email });
+    return created;
   });
 
   return NextResponse.json({ lead });

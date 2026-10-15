@@ -366,8 +366,42 @@ model Lead {
   stageId String
   stage   Stage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
+  stageEvents LeadStageEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([stageId])
+}
+
+// One row per stage change (or initial placement) of a CRM lead, so weekly
+// outreach numbers can be counted by when things happened rather than where
+// leads sit today. Stage and pipeline names are copied in so history survives
+// renames and deletions. rootLeadId is the original lead (sourceLeadId ?? id),
+// letting a lead and its mirrored overview copy count as one affiliate.
+model LeadStageEvent {
+  id String @id @default(cuid())
+
+  leadId     String?
+  lead       Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  rootLeadId String
+
+  pipelineName  String
+  fromStageName String?
+  toStageName   String
+  actor         String?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([rootLeadId])
+}
+
+// Small key/value store for app-wide settings edited from the UI (e.g. the
+// weekly outreach targets, stored as JSON under "outreachTargets").
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }

@@ -71,7 +71,7 @@ function buildFillBlanksData(existing: ExistingLead, row: ImportRow) {
   return data;
 }
 
-async function runImport(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], rows: ImportRow[]) {
+async function runImport(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], rows: ImportRow[], actor: string) {
   const groups = await tx.pipelineGroup.findMany({
     include: { pipelines: { include: { stages: { include: { leads: true } } } } },
   });
@@ -186,6 +186,17 @@ async function runImport(tx: Parameters<Parameters<typeof prisma.$transaction>[0
           dateOfReachOut: row.dateOfReachOut ? new Date(row.dateOfReachOut) : null,
         },
       });
+      // Stage history for the weekly outreach numbers (names as given in the import row).
+      await tx.leadStageEvent.create({
+        data: {
+          leadId: created.id,
+          rootLeadId: created.id,
+          pipelineName: row.pipelineName.trim(),
+          fromStageName: null,
+          toStageName: row.stageName.trim(),
+          actor,
+        },
+      });
       pipeline.leadsByName.set(nameKey, created);
       summary.created++;
       results.push({
@@ -241,11 +252,11 @@ export async function POST(request: NextRequest) {
   let outcome: Outcome;
 
   if (commit) {
-    outcome = await prisma.$transaction((tx) => runImport(tx, rows));
+    outcome = await prisma.$transaction((tx) => runImport(tx, rows, session.email));
   } else {
     try {
       await prisma.$transaction(async (tx) => {
-        throw new DryRunAbort(await runImport(tx, rows));
+        throw new DryRunAbort(await runImport(tx, rows, session.email));
       });
       throw new Error("unreachable");
     } catch (err) {
