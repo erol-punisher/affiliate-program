@@ -669,33 +669,54 @@ export function CrmBoard({ userEmail }: Props) {
             {activeGroup && (
               <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 pb-3">
                 {activeGroup.pipelines.length > 0 && (
-                  <select
-                    value={activePipelineId ?? ""}
-                    onChange={(e) => setActivePipelineId(e.target.value)}
-                    className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-zinc-200 outline-none focus:ring-1 focus:ring-blue-500/50"
-                  >
-                    {/* Main overview pipelines (no category) first, then one section per category */}
-                    {activeGroup.pipelines
-                      .filter((p) => !PIPELINE_CATEGORIES.some((c) => c.value === p.category))
-                      .map((p) => (
-                        <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
-                          {p.name}
-                        </option>
-                      ))}
-                    {PIPELINE_CATEGORIES.map((c) => {
-                      const inCategory = activeGroup.pipelines.filter((p) => p.category === c.value);
-                      if (inCategory.length === 0) return null;
-                      return (
-                        <optgroup key={c.value} label={c.label} className="bg-[#10141f] text-zinc-500">
-                          {inCategory.map((p) => (
-                            <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
-                              {p.name}
+                  <div className="flex flex-col gap-1.5">
+                    {/* Main overview pipeline(s) such as Affiliates Standard on top, category dropdowns below */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {activeGroup.pipelines
+                        .filter((p) => !PIPELINE_CATEGORIES.some((c) => c.value === p.category))
+                        .map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setActivePipelineId(p.id)}
+                            className={`w-56 truncate rounded-md border px-2.5 py-1 text-left text-xs font-medium transition-colors ${
+                              p.id === activePipelineId
+                                ? "border-blue-500/60 bg-blue-500/15 text-zinc-100"
+                                : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                            }`}
+                          >
+                            {p.name}
+                          </button>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PIPELINE_CATEGORIES.map((c) => {
+                        const inCategory = activeGroup.pipelines.filter((p) => p.category === c.value);
+                        const isActive = inCategory.some((p) => p.id === activePipelineId);
+                        return (
+                          <select
+                            key={c.value}
+                            value={isActive ? (activePipelineId ?? "") : ""}
+                            onChange={(e) => e.target.value && setActivePipelineId(e.target.value)}
+                            className={`w-56 cursor-pointer rounded-md border px-2.5 py-1 text-xs font-medium outline-none transition-colors focus:ring-1 focus:ring-blue-500/50 ${
+                              isActive
+                                ? "border-blue-500/60 bg-blue-500/15 text-zinc-100"
+                                : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                            }`}
+                          >
+                            <option value="" disabled className="bg-[#10141f] text-zinc-500">
+                              {c.label}
                             </option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  </select>
+                            {inCategory.map((p) => (
+                              <option key={p.id} value={p.id} className="bg-[#10141f] text-zinc-100">
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
 
                 {activePipeline && !renamingPipeline && (
