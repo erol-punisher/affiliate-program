@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import {
   OUTREACH_TARGETS_KEY,
   averagePerWeek,
+  contactedLeadIdsByWeek,
   parseTargets,
   weeklyOutreachStats,
 } from "@/lib/outreachStats";
@@ -52,8 +53,28 @@ export async function GET(request: NextRequest) {
     },
   };
 
+  // Who was reached out to in each shown week: Name (Country) - pipeline - owner.
+  const shownWeeks = new Set(weeks.map((w) => w.weekStart));
+  const idsByWeek = contactedLeadIdsByWeek(events, pipeline);
+  const ids = new Set<string>();
+  for (const [week, set] of idsByWeek) if (shownWeeks.has(week)) set.forEach((id) => ids.add(id));
+  const leads = await prisma.lead.findMany({
+    where: { id: { in: Array.from(ids) } },
+    select: { id: true, name: true, country: true, owner: true, stage: { select: { pipeline: { select: { name: true } } } } },
+  });
+  const leadById = new Map(leads.map((l) => [l.id, l]));
+  const contactedByWeek: Record<string, { id: string; name: string; country: string | null; pipeline: string; owner: string | null }[]> = {};
+  for (const week of shownWeeks) {
+    contactedByWeek[week] = Array.from(idsByWeek.get(week) ?? [])
+      .map((id) => leadById.get(id))
+      .filter((l) => l !== undefined)
+      .map((l) => ({ id: l.id, name: l.name, country: l.country, pipeline: l.stage.pipeline.name, owner: l.owner }))
+      .sort((a, b) => a.pipeline.localeCompare(b.pipeline) || a.name.localeCompare(b.name));
+  }
+
   return NextResponse.json({
     weeks,
+    contactedByWeek,
     averages,
     targets: parseTargets(setting?.value),
     targetsUpdatedBy: setting?.updatedBy ?? null,

@@ -70,6 +70,19 @@ export function weeklyOutreachStats(events: StageEventLite[], from: Date, now: D
   return weeks;
 }
 
+/** rootLeadIds contacted (first contact or follow-up) per week, keyed by Monday (YYYY-MM-DD). */
+export function contactedLeadIdsByWeek(events: StageEventLite[], pipelineName?: string): Map<string, Set<string>> {
+  const byWeek = new Map<string, Set<string>>();
+  for (const e of events) {
+    if (pipelineName && e.pipelineName !== pipelineName) continue;
+    if (!classifyStage(e.toStageName).includes("contacted")) continue;
+    const week = weekStart(e.createdAt).toISOString().slice(0, 10);
+    if (!byWeek.has(week)) byWeek.set(week, new Set());
+    byWeek.get(week)!.add(e.rootLeadId);
+  }
+  return byWeek;
+}
+
 /** Average per week over the given weeks (rounded to 1 decimal), or null if there are none. */
 export function averagePerWeek(weeks: WeekStats[], field: keyof Omit<WeekStats, "weekStart">): number | null {
   if (weeks.length === 0) return null;

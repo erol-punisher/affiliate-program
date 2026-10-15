@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 type Targets = { contacted: number; responded: number };
 type Week = { weekStart: string; contacted: number; responded: number };
 type Averages = Record<"last4" | "allTime", Record<keyof Targets, number | null>>;
+type ContactedLead = { id: string; name: string; country: string | null; pipeline: string; owner: string | null };
 type OutreachData = {
   weeks: Week[];
+  contactedByWeek: Record<string, ContactedLead[]>;
   averages: Averages;
   targets: Targets;
   targetsUpdatedBy: string | null;
@@ -47,6 +49,7 @@ export function WeeklyOutreachSection() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Targets | null>(null);
   const [saving, setSaving] = useState(false);
+  const [openWeek, setOpenWeek] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,17 +208,49 @@ export function WeeklyOutreachSection() {
                 </tr>
               </thead>
               <tbody>
-                {data.weeks.map((w, i) => (
-                  <tr key={w.weekStart} className="border-b border-white/[0.04] last:border-0">
-                    <td className="px-3 py-2 text-zinc-300">
-                      {weekLabel(w.weekStart)}
-                      {i === 0 && <span className="ml-2 text-[10px] uppercase text-blue-400">this week</span>}
-                    </td>
-                    <TargetCell value={w.contacted} target={data.targets.contacted} />
-                    <TargetCell value={w.responded} target={data.targets.responded} />
-                    <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{pct(w.responded, w.contacted)}</td>
-                  </tr>
-                ))}
+                {data.weeks.map((w, i) => {
+                  const isOpen = openWeek === w.weekStart;
+                  const contacted = data.contactedByWeek[w.weekStart] ?? [];
+                  return (
+                    <Fragment key={w.weekStart}>
+                      <tr
+                        onClick={() => setOpenWeek(isOpen ? null : w.weekStart)}
+                        className="cursor-pointer border-b border-white/[0.04] transition-colors last:border-0 hover:bg-white/[0.03]"
+                      >
+                        <td className="px-3 py-2 text-zinc-300">
+                          <span className={`mr-1.5 inline-block text-[10px] text-zinc-500 transition-transform ${isOpen ? "rotate-90" : ""}`}>▶</span>
+                          {weekLabel(w.weekStart)}
+                          {i === 0 && <span className="ml-2 text-[10px] uppercase text-blue-400">this week</span>}
+                        </td>
+                        <TargetCell value={w.contacted} target={data.targets.contacted} />
+                        <TargetCell value={w.responded} target={data.targets.responded} />
+                        <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{pct(w.responded, w.contacted)}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr className="border-b border-white/[0.04] bg-white/[0.02]">
+                          <td colSpan={4} className="px-6 py-3">
+                            {contacted.length === 0 ? (
+                              <p className="text-xs text-zinc-500">No one reached out to this week.</p>
+                            ) : (
+                              <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs text-zinc-300 marker:text-zinc-600">
+                                {contacted.map((l) => (
+                                  <li key={l.id}>
+                                    <span className="text-zinc-100">{l.name}</span>
+                                    {l.country && <span className="text-zinc-500"> ({l.country})</span>}
+                                    <span className="text-zinc-600"> - </span>
+                                    {l.pipeline}
+                                    <span className="text-zinc-600"> - </span>
+                                    <span className={l.owner ? "" : "text-zinc-500"}>{l.owner ?? "No owner"}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
