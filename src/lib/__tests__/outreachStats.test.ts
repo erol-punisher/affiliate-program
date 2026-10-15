@@ -9,12 +9,12 @@ const ev = (rootLeadId: string, toStageName: string, iso: string, pipelineName =
 });
 
 describe("classifyStage", () => {
-  it("separates first contact, follow-ups, responses and interest", () => {
+  it("counts first contacts and follow-ups as contacted, any Responded stage as responded", () => {
     expect(classifyStage("Contacted")).toEqual(["contacted"]);
-    expect(classifyStage("Contacted (2)")).toEqual(["followUp"]);
-    expect(classifyStage("Contacted (3)")).toEqual(["followUp"]);
-    expect(classifyStage("Responded with Interest")).toEqual(["responded", "interested"]);
-    expect(classifyStage("Responded with Interest - For a Fee")).toEqual(["responded", "interested"]);
+    expect(classifyStage("Contacted (2)")).toEqual(["contacted"]);
+    expect(classifyStage("Contacted (3)")).toEqual(["contacted"]);
+    expect(classifyStage("Responded with Interest")).toEqual(["responded"]);
+    expect(classifyStage("Responded with Interest - For a Fee")).toEqual(["responded"]);
     expect(classifyStage("Responded with disinterest")).toEqual(["responded"]);
     expect(classifyStage("Closed Won")).toEqual([]);
     expect(classifyStage("Affiliates in the Pipeline")).toEqual([]);
@@ -42,8 +42,8 @@ describe("weeklyOutreachStats", () => {
   it("counts each affiliate once per week and orders weeks newest first", () => {
     const weeks = weeklyOutreachStats(events, new Date("2026-10-06T00:00:00Z"), new Date("2026-10-16T00:00:00Z"));
     expect(weeks).toEqual([
-      { weekStart: "2026-10-12", contacted: 2, followUps: 1, responded: 1, interested: 1 },
-      { weekStart: "2026-10-05", contacted: 0, followUps: 0, responded: 1, interested: 0 },
+      { weekStart: "2026-10-12", contacted: 3, responded: 1 },
+      { weekStart: "2026-10-05", contacted: 0, responded: 1 },
     ]);
   });
 
@@ -61,12 +61,12 @@ describe("weeklyOutreachStats", () => {
 describe("averagePerWeek / parseTargets", () => {
   it("averages and falls back to defaults for bad targets", () => {
     const weeks = [
-      { weekStart: "x", contacted: 20, followUps: 0, responded: 3, interested: 2 },
-      { weekStart: "y", contacted: 25, followUps: 0, responded: 2, interested: 1 },
+      { weekStart: "x", contacted: 20, responded: 3 },
+      { weekStart: "y", contacted: 25, responded: 2 },
     ];
     expect(averagePerWeek(weeks, "contacted")).toBe(22.5);
     expect(averagePerWeek([], "contacted")).toBeNull();
-    expect(parseTargets('{"contacted":30,"responded":-1}')).toEqual({ contacted: 30, responded: 3, interested: 2 });
-    expect(parseTargets("not json")).toEqual({ contacted: 25, responded: 3, interested: 2 });
+    expect(parseTargets('{"contacted":30,"responded":-1}')).toEqual({ contacted: 30, responded: 3 });
+    expect(parseTargets("not json")).toEqual({ contacted: 20, responded: 3 });
   });
 });

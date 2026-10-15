@@ -5,10 +5,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export type OutreachTargets = {
   contacted: number;
   responded: number;
-  interested: number;
 };
 
-export const DEFAULT_OUTREACH_TARGETS: OutreachTargets = { contacted: 25, responded: 3, interested: 2 };
+export const DEFAULT_OUTREACH_TARGETS: OutreachTargets = { contacted: 20, responded: 3 };
 export const OUTREACH_TARGETS_KEY = "outreachTargets";
 
 export type StageEventLite = {
@@ -20,20 +19,16 @@ export type StageEventLite = {
 
 export type WeekStats = {
   weekStart: string; // YYYY-MM-DD, Monday (UTC)
-  contacted: number; // first touch: moved into "Contacted"
-  followUps: number; // moved into "Contacted (2)" / "Contacted (3)"
+  contacted: number; // reached out to: moved into "Contacted", "Contacted (2)", "Contacted (3)", …
   responded: number; // moved into any "Responded…" stage
-  interested: number; // moved into "Responded with Interest" (incl. "- For a Fee")
 };
 
-type Kind = "contacted" | "followUp" | "responded" | "interested";
+type Kind = "contacted" | "responded";
 
 /** Which weekly bucket(s) moving into a stage counts towards, by stage name. */
 export function classifyStage(stageName: string): Kind[] {
   const name = stageName.trim().toLowerCase();
-  if (name === "contacted") return ["contacted"];
-  if (/^contacted \(\d+\)$/.test(name)) return ["followUp"];
-  if (name.startsWith("responded with interest")) return ["responded", "interested"];
+  if (name === "contacted" || /^contacted \(\d+\)$/.test(name)) return ["contacted"];
   if (name.startsWith("responded")) return ["responded"];
   return [];
 }
@@ -69,9 +64,7 @@ export function weeklyOutreachStats(events: StageEventLite[], from: Date, now: D
     weeks.push({
       weekStart: week,
       contacted: count(week, "contacted"),
-      followUps: count(week, "followUp"),
       responded: count(week, "responded"),
-      interested: count(week, "interested"),
     });
   }
   return weeks;
@@ -88,7 +81,7 @@ export function parseTargets(value: string | null | undefined): OutreachTargets 
     const parsed = value ? JSON.parse(value) : {};
     const pick = (k: keyof OutreachTargets) =>
       Number.isFinite(parsed?.[k]) && parsed[k] >= 0 ? Math.round(parsed[k]) : DEFAULT_OUTREACH_TARGETS[k];
-    return { contacted: pick("contacted"), responded: pick("responded"), interested: pick("interested") };
+    return { contacted: pick("contacted"), responded: pick("responded") };
   } catch {
     return DEFAULT_OUTREACH_TARGETS;
   }

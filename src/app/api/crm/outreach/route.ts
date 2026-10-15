@@ -13,7 +13,7 @@ const MAX_WEEKS = 26;
 // patchy (backfilled from reach-out dates), so it's kept but not shown.
 const REPORTING_START = new Date("2026-10-12T00:00:00Z");
 
-// Weekly outreach numbers (contacted / follow-ups / responded / with interest),
+// Weekly outreach numbers (contacted incl. follow-ups / responded),
 // counted from LeadStageEvent history, plus the editable weekly targets.
 export async function GET(request: NextRequest) {
   const session = await getSessionWithFreshToken();
@@ -45,12 +45,10 @@ export async function GET(request: NextRequest) {
     last4: {
       contacted: averagePerWeek(last4, "contacted"),
       responded: averagePerWeek(last4, "responded"),
-      interested: averagePerWeek(last4, "interested"),
     },
     allTime: {
       contacted: averagePerWeek(completed, "contacted"),
       responded: averagePerWeek(completed, "responded"),
-      interested: averagePerWeek(completed, "interested"),
     },
   };
 

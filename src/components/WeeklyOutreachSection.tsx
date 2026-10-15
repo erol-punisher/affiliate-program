@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-type Targets = { contacted: number; responded: number; interested: number };
-type Week = { weekStart: string; contacted: number; followUps: number; responded: number; interested: number };
+type Targets = { contacted: number; responded: number };
+type Week = { weekStart: string; contacted: number; responded: number };
 type Averages = Record<"last4" | "allTime", Record<keyof Targets, number | null>>;
 type OutreachData = {
   weeks: Week[];
@@ -15,9 +15,8 @@ type OutreachData = {
 };
 
 const METRICS: { key: keyof Targets; label: string; hint: string }[] = [
-  { key: "contacted", label: "Contacted", hint: "New leads moved into Contacted" },
+  { key: "contacted", label: "Contacted", hint: "Moved into Contacted, Contacted (2) or Contacted (3)" },
   { key: "responded", label: "Responded", hint: "Moved into any Responded… stage" },
-  { key: "interested", label: "With interest", hint: "Moved into Responded with Interest (incl. For a Fee)" },
 ];
 
 function weekLabel(weekStart: string): string {
@@ -95,7 +94,7 @@ export function WeeklyOutreachSection() {
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Weekly outreach</h2>
           <p className="mt-0.5 text-xs text-zinc-600">
-            Counted from stage changes, Monday–Sunday. Each affiliate counts once per week, even with an overview copy.
+            Counted from stage changes, Monday–Sunday. Contacted includes follow-ups; each affiliate counts once per week, even with an overview copy.
             {data && ` Tracking since ${new Date(data.trackingSince).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.`}
           </p>
         </div>
@@ -119,7 +118,7 @@ export function WeeklyOutreachSection() {
         !error && <p className="text-sm text-zinc-500">Loading…</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {METRICS.map((m) => {
               const value = thisWeek?.[m.key] ?? 0;
               const target = data.targets[m.key];
@@ -178,7 +177,7 @@ export function WeeklyOutreachSection() {
             ) : (
               <>
                 <span>
-                  Weekly targets: {data.targets.contacted} contacted · {data.targets.responded} responded · {data.targets.interested} with interest
+                  Weekly targets: {data.targets.contacted} contacted · {data.targets.responded} responded
                   {data.targetsUpdatedBy && ` (set by ${data.targetsUpdatedBy})`}
                 </span>
                 <button
@@ -201,11 +200,8 @@ export function WeeklyOutreachSection() {
                 <tr className="border-b border-white/10 text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2 text-left font-medium">Week</th>
                   <th className="px-3 py-2 text-right font-medium">Contacted</th>
-                  <th className="px-3 py-2 text-right font-medium">Follow-ups</th>
                   <th className="px-3 py-2 text-right font-medium">Responded</th>
-                  <th className="px-3 py-2 text-right font-medium">With interest</th>
                   <th className="px-3 py-2 text-right font-medium" title="Responded ÷ contacted that week">Response rate</th>
-                  <th className="px-3 py-2 text-right font-medium" title="With interest ÷ contacted that week">Interest rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -216,11 +212,8 @@ export function WeeklyOutreachSection() {
                       {i === 0 && <span className="ml-2 text-[10px] uppercase text-blue-400">this week</span>}
                     </td>
                     <TargetCell value={w.contacted} target={data.targets.contacted} />
-                    <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{w.followUps}</td>
                     <TargetCell value={w.responded} target={data.targets.responded} />
-                    <TargetCell value={w.interested} target={data.targets.interested} />
                     <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{pct(w.responded, w.contacted)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{pct(w.interested, w.contacted)}</td>
                   </tr>
                 ))}
               </tbody>
