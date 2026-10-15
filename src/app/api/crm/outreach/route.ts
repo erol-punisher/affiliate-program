@@ -9,6 +9,9 @@ import {
 } from "@/lib/outreachStats";
 
 const MAX_WEEKS = 26;
+// Weekly reporting starts with the week of Oct 12, 2026; earlier history is
+// patchy (backfilled from reach-out dates), so it's kept but not shown.
+const REPORTING_START = new Date("2026-10-12T00:00:00Z");
 
 // Weekly outreach numbers (contacted / follow-ups / responded / with interest),
 // counted from LeadStageEvent history, plus the editable weekly targets.
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
     prisma.pipeline.findMany({ select: { name: true }, orderBy: { order: "asc" } }),
   ]);
 
-  const trackingSince = events[0]?.createdAt ?? now;
+  const trackingSince = REPORTING_START;
   const earliestShown = new Date(now.getTime() - (MAX_WEEKS - 1) * 7 * 24 * 60 * 60 * 1000);
   const from = trackingSince > earliestShown ? trackingSince : earliestShown;
   const weeks = weeklyOutreachStats(events, from, now, pipeline);
