@@ -733,14 +733,17 @@ export function CrmBoard({ userEmail }: Props) {
                     >
                       <PencilIcon className="h-3.5 w-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeletePipeline(true)}
-                      title="Delete sub-pipeline"
-                      className="text-zinc-500 transition-colors hover:text-red-400"
-                    >
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </button>
+                    {/* The main overview pipeline (no category, e.g. Affiliates Standard) can't be deleted */}
+                    {activePipeline.category && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePipeline(true)}
+                        title="Delete sub-pipeline"
+                        className="text-zinc-500 transition-colors hover:text-red-400"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </>
                 )}
                 {renamingPipeline && (

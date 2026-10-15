@@ -33,6 +33,14 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   }
 
   const { id } = await params;
+  const pipeline = await prisma.pipeline.findUnique({ where: { id }, select: { category: true } });
+  if (!pipeline) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  // Main overview pipelines (e.g. Affiliates Standard) hold every affiliate's mirrored copy.
+  if (!pipeline.category) {
+    return NextResponse.json({ error: "The main pipeline can't be deleted" }, { status: 409 });
+  }
   await prisma.pipeline.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
