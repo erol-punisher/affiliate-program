@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/TopNav";
-import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon } from "@/components/icons";
+import Link from "next/link";
+import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon } from "@/components/icons";
 import { CsvImportModal } from "@/components/CsvImportModal";
 import { LeadModal, type LeadFormValues, EMPTY_LEAD_FORM } from "@/components/LeadModal";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
@@ -525,14 +526,23 @@ export function CrmBoard({ userEmail }: Props) {
             <h1 className="text-xl font-semibold tracking-tight text-zinc-100">CRM</h1>
             <p className="mt-0.5 text-sm text-zinc-500">Track leads through your pipelines</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowImportModal(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
-          >
-            <UploadIcon className="h-3.5 w-3.5" />
-            Import CSV
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href="/crm/analytics"
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
+            >
+              <AnalyticsIcon className="h-3.5 w-3.5" />
+              Analytics
+            </Link>
+            <button
+              type="button"
+              onClick={() => setShowImportModal(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
+            >
+              <UploadIcon className="h-3.5 w-3.5" />
+              Import CSV
+            </button>
+          </div>
         </div>
 
         {loadError && (
