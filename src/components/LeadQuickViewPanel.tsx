@@ -6,6 +6,7 @@ import type { LeadDetail } from "@/components/LeadDetailPanel";
 
 export type EditableLeadField =
   | "username"
+  | "firstName"
   | "affiliateManager"
   | "country"
   | "whatsapp"
@@ -254,6 +255,13 @@ export function LeadQuickViewPanel({
                     field="username"
                     rawValue={lead.username ?? ""}
                     displayValue={lead.username}
+                    {...rowProps}
+                  />
+                  <EditableInfoRow
+                    label="First name (for emails)"
+                    field="firstName"
+                    rawValue={lead.firstName ?? ""}
+                    displayValue={lead.firstName}
                     {...rowProps}
                   />
                   <EditableInfoRow

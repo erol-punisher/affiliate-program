@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
         email: parseOptionalString(body?.email) ?? null,
         notes: parseOptionalString(body?.notes) ?? null,
         username: parseOptionalString(body?.username) ?? null,
+        firstName: parseOptionalString(body?.firstName) ?? null,
         owner: parseOptionalString(body?.owner) ?? null,
         affiliateManager: parseOptionalString(body?.affiliateManager) ?? null,
         country: parseOptionalString(body?.country) ?? null,

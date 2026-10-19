@@ -339,6 +339,7 @@ model Stage {
 model Lead {
   id    String  @id @default(cuid())
   name  String // "Affiliate Name"
+  firstName String? // how to greet them in emails ({{first_name}}); falls back to the first word of name
   email String? // "Email of Contact"
   notes String? // "Description"
   order Int     @default(0) // position within its stage column

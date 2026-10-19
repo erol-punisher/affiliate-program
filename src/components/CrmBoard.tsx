@@ -20,6 +20,7 @@ type Lead = {
   order: number;
   stageId: string;
   username: string | null;
+  firstName: string | null;
   owner: string | null;
   affiliateManager: string | null;
   country: string | null;
@@ -258,6 +259,7 @@ export function CrmBoard({ userEmail }: Props) {
       const shared = {
         name: values.name,
         username: values.username || null,
+        firstName: values.firstName || null,
         owner: values.owner || null,
         affiliateManager: values.affiliateManager || null,
         email: values.email || null,
@@ -1148,6 +1150,7 @@ export function CrmBoard({ userEmail }: Props) {
                   ...EMPTY_LEAD_FORM,
                   name: editingLead.name,
                   username: editingLead.username ?? "",
+                  firstName: editingLead.firstName ?? "",
                   owner: editingLead.owner ?? "",
                   affiliateManager: editingLead.affiliateManager ?? "",
                   email: editingLead.email ?? "",

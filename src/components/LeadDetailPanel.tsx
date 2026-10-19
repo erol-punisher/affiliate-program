@@ -9,6 +9,7 @@ export type LeadDetail = {
   email: string | null;
   notes: string | null;
   username: string | null;
+  firstName: string | null;
   owner: string | null;
   affiliateManager: string | null;
   country: string | null;
@@ -215,6 +216,7 @@ export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose
             <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Other Info</h3>
             <div className="divide-y divide-white/5">
               <InfoRow label="Username" value={lead.username} />
+              <InfoRow label="First name (for emails)" value={lead.firstName} />
               <InfoRow label="Affiliate Manager" value={lead.affiliateManager} />
               <InfoRow label="Country" value={lead.country} />
               <InfoRow label="WA" value={lead.whatsapp} />

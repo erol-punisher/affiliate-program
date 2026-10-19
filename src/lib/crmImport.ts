@@ -9,6 +9,7 @@ export type ImportRow = {
   email: string | null;
   notes: string | null;
   username: string | null;
+  firstName: string | null;
   country: string | null;
   whatsapp: string | null;
   followerCount: number | null;
@@ -35,6 +36,7 @@ const HEADER_ALIASES: Record<string, string[]> = {
   email: ["email of contact"],
   description: ["description"],
   username: ["username"],
+  firstName: ["first name"],
   country: ["country"],
   whatsapp: ["wa"],
   followerCount: ["follower count"],
@@ -150,6 +152,7 @@ export function parseImportCsv(csvText: string): ImportParseResult {
       email: cell(raw, index, "email"),
       notes: notesParts.length > 0 ? notesParts.join("\n") : null,
       username: cell(raw, index, "username"),
+      firstName: cell(raw, index, "firstName"),
       country: cell(raw, index, "country"),
       whatsapp: cell(raw, index, "whatsapp"),
       followerCount,

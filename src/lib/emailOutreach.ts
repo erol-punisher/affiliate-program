@@ -67,6 +67,7 @@ export async function sendOutreachEmails(args: {
         email: true,
         country: true,
         username: true,
+        firstName: true,
         followerCount: true,
         websiteUrl: true,
         socialsUrl: true,

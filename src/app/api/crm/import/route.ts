@@ -8,6 +8,7 @@ type ExistingLead = {
   email: string | null;
   notes: string | null;
   username: string | null;
+  firstName: string | null;
   country: string | null;
   whatsapp: string | null;
   followerCount: number | null;
@@ -54,6 +55,7 @@ function buildFillBlanksData(existing: ExistingLead, row: ImportRow) {
   maybeSet("email", row.email);
   maybeSet("notes", row.notes);
   maybeSet("username", row.username);
+  maybeSet("firstName", row.firstName);
   maybeSet("country", row.country);
   maybeSet("whatsapp", row.whatsapp);
   maybeSet("followerCount", row.followerCount);
@@ -174,6 +176,7 @@ async function runImport(tx: Parameters<Parameters<typeof prisma.$transaction>[0
           email: row.email,
           notes: row.notes,
           username: row.username,
+          firstName: row.firstName,
           country: row.country,
           whatsapp: row.whatsapp,
           followerCount: row.followerCount,

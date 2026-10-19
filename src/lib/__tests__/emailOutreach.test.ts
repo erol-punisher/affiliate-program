@@ -18,6 +18,11 @@ describe("renderTemplate", () => {
     expect(renderTemplate("{{website}}", lead, me)).toBe("");
   });
 
+  it("prefers the lead's first-name field when it's set", () => {
+    expect(renderTemplate("Hi {{first_name}}", { ...lead, name: "Strategia eCommerce", firstName: "Luca" }, me)).toBe("Hi Luca");
+    expect(renderTemplate("Hi {{first_name}}", { ...lead, name: "Strategia eCommerce", firstName: "  " }, me)).toBe("Hi Strategia");
+  });
+
   it("takes the first word of channel-style names", () => {
     expect(renderTemplate("{{first_name}}", { ...lead, name: "Marcos Balmain | Shopify, IA y Ecommerce" }, me)).toBe("Marcos");
   });

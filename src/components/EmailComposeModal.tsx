@@ -9,6 +9,7 @@ export type EmailRecipient = {
   email: string | null;
   country: string | null;
   username: string | null;
+  firstName?: string | null;
   followerCount?: number | null;
   websiteUrl?: string | null;
   socialsUrl?: string | null;

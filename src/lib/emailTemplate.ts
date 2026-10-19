@@ -1,5 +1,7 @@
 export type TemplateLead = {
   name: string;
+  /** Set on the lead for greeting; when empty, the first word of name is used. */
+  firstName?: string | null;
   country: string | null;
   username: string | null;
   pipelineName: string;
@@ -24,7 +26,7 @@ type Variable = {
 const firstWord = (s: string) => s.split(/[\s|,-]+/).filter(Boolean)[0] ?? s;
 
 export const TEMPLATE_VARIABLES: Variable[] = [
-  { key: "first_name", label: "First name", group: "Lead", value: (l) => firstWord(l.name) },
+  { key: "first_name", label: "First name", group: "Lead", value: (l) => l.firstName?.trim() || firstWord(l.name) },
   { key: "icebreaker", label: "AI first line (generate & approve first)", group: "Lead", value: (l) => l.icebreaker ?? "" },
   { key: "name", label: "Full name / channel", group: "Lead", value: (l) => l.name },
   { key: "country", label: "Country", group: "Lead", value: (l) => l.country ?? "" },

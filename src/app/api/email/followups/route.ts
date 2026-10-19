@@ -33,6 +33,7 @@ export async function GET() {
           email: true,
           country: true,
           username: true,
+          firstName: true,
           followerCount: true,
           websiteUrl: true,
           socialsUrl: true,

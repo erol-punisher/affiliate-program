@@ -21,6 +21,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     stageId?: string;
     order?: number;
     username?: string | null;
+    firstName?: string | null;
     owner?: string | null;
     affiliateManager?: string | null;
     country?: string | null;
@@ -43,6 +44,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (notes !== undefined) data.notes = notes;
   const username = parseOptionalString(body?.username);
   if (username !== undefined) data.username = username;
+  const firstName = parseOptionalString(body?.firstName);
+  if (firstName !== undefined) data.firstName = firstName;
   const owner = parseOptionalString(body?.owner);
   if (owner !== undefined) data.owner = owner;
   const affiliateManager = parseOptionalString(body?.affiliateManager);

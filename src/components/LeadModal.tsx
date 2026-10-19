@@ -6,6 +6,7 @@ import { XIcon } from "@/components/icons";
 export type LeadFormValues = {
   name: string;
   username: string;
+  firstName: string;
   owner: string;
   affiliateManager: string;
   email: string;
@@ -23,6 +24,7 @@ export type LeadFormValues = {
 export const EMPTY_LEAD_FORM: LeadFormValues = {
   name: "",
   username: "",
+  firstName: "",
   owner: "",
   affiliateManager: "",
   email: "",
@@ -127,6 +129,7 @@ export function LeadModal({
         >
           <div className="grid grid-cols-2 gap-4 px-6 py-5">
             <Field label="Username" value={values.username} onChange={(v) => set("username", v)} />
+            <Field label="First name (for emails)" value={values.firstName} onChange={(v) => set("firstName", v)} />
             <Field
               label="Affiliate Name"
               value={values.name}
