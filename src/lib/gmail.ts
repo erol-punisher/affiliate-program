@@ -37,18 +37,29 @@ function encodeHeader(value: string): string {
 /** Sends a plain-text email; pass threadId + inReplyTo to send it as a reply in an existing thread. */
 export async function sendGmail(
   token: string,
-  msg: { from: string; fromName?: string; to: string; subject: string; body: string; threadId?: string; inReplyTo?: string },
+  msg: { from: string; fromName?: string; to: string; subject: string; body: string; html?: string; threadId?: string; inReplyTo?: string },
 ): Promise<{ id: string; threadId: string; messageId: string }> {
+  // base64 wrapped at 76 chars, as MIME expects
+  const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64").replace(/.{76}/g, "$&\r\n");
   const headers = [
     `From: ${msg.fromName ? `${encodeHeader(msg.fromName)} <${msg.from}>` : msg.from}`,
     `To: ${msg.to}`,
     `Subject: ${encodeHeader(msg.subject)}`,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
   ];
   if (msg.inReplyTo) headers.push(`In-Reply-To: ${msg.inReplyTo}`, `References: ${msg.inReplyTo}`);
-  const raw = `${headers.join("\r\n")}\r\n\r\n${Buffer.from(msg.body, "utf8").toString("base64")}`;
+  let raw: string;
+  if (msg.html) {
+    // Plain-text + HTML alternatives: clients show the HTML, text-only clients and filters get the text.
+    const boundary = `alt_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    const part = (type: string, content: string) =>
+      `--${boundary}\r\nContent-Type: ${type}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(content)}\r\n`;
+    raw = `${headers.join("\r\n")}\r\n\r\n${part("text/plain", msg.body)}${part("text/html", msg.html)}--${boundary}--`;
+  } else {
+    headers.push('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64");
+    raw = `${headers.join("\r\n")}\r\n\r\n${b64(msg.body)}`;
+  }
   const sent = await gmailFetch<{ id: string; threadId: string }>(token, "/messages/send", {
     method: "POST",
     body: JSON.stringify({ raw: Buffer.from(raw, "utf8").toString("base64url"), threadId: msg.threadId }),

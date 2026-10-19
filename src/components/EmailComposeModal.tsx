@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TEMPLATE_VARIABLES, missingVariables, renderTemplate, unknownVariables, type TemplateLead } from "@/lib/emailTemplate";
+import { renderBrandedEmail } from "@/lib/emailHtml";
 
 export type EmailRecipient = {
   id: string;
@@ -47,6 +48,11 @@ export function EmailComposeModal({
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
   const [templateStepId, setTemplateStepId] = useState<string | null>(null);
+  const [layout, setLayout] = useState<"plain" | "branded">("plain");
+  const [headline, setHeadline] = useState("");
+  const [highlight, setHighlight] = useState("");
+  const [buttonLabel, setButtonLabel] = useState("");
+  const [buttonUrl, setButtonUrl] = useState("");
   const [icebreakers, setIcebreakers] = useState<Record<string, string>>({});
   const [suggesting, setSuggesting] = useState(false);
   const [usage, setUsage] = useState<{ sentToday: number; dailyCap: number } | null>(null);
@@ -81,12 +87,26 @@ export function EmailComposeModal({
     ? { subject: renderTemplate(subject, toLead(previewRecipient), sender), body: renderTemplate(body, toLead(previewRecipient), sender) }
     : null;
 
+  const brandedFields = layout === "branded" ? [headline, highlight, buttonLabel, buttonUrl].join("\n") : "";
   // Across everyone selected: which variables come out empty (no fallback), and any unknown {{keys}}.
   const missingCounts = new Map<string, number>();
   for (const r of selectedRecipients) {
-    for (const key of missingVariables(`${subject}\n${body}`, toLead(r), sender)) missingCounts.set(key, (missingCounts.get(key) ?? 0) + 1);
+    for (const key of missingVariables(`${subject}\n${body}\n${brandedFields}`, toLead(r), sender)) missingCounts.set(key, (missingCounts.get(key) ?? 0) + 1);
   }
-  const unknown = unknownVariables(`${subject}\n${body}`);
+  const unknown = unknownVariables(`${subject}\n${body}\n${brandedFields}`);
+  const brandedHtml =
+    layout === "branded" && previewRecipient
+      ? renderBrandedEmail({
+          greeting: renderTemplate("Hi {{first_name|there}}", toLead(previewRecipient), sender),
+          headline: renderTemplate(headline, toLead(previewRecipient), sender) || "Your headline",
+          highlight: highlight ? renderTemplate(highlight, toLead(previewRecipient), sender) : undefined,
+          body: renderTemplate(body, toLead(previewRecipient), sender),
+          buttonLabel: buttonLabel ? renderTemplate(buttonLabel, toLead(previewRecipient), sender) : undefined,
+          buttonUrl: buttonUrl ? renderTemplate(buttonUrl, toLead(previewRecipient), sender) : undefined,
+          senderName: sender.name,
+          senderEmail: sender.email,
+        })
+      : null;
 
   function insertVariable(key: string) {
     const token = `{{${key}}}`;
@@ -104,7 +124,10 @@ export function EmailComposeModal({
   }
 
   const usesIcebreaker = /\{\{\s*icebreaker/i.test(`${subject}\n${body}`);
-  const blocked = unknown.length > 0 || missingCounts.size > 0;
+  const blocked =
+    unknown.length > 0 ||
+    missingCounts.size > 0 ||
+    (layout === "branded" && (!headline.trim() || (!!buttonLabel.trim() !== !!buttonUrl.trim()) || (!!buttonUrl.trim() && !/^https?:\/\//.test(buttonUrl.trim()))));
   const remainingToday = usage ? Math.max(0, usage.dailyCap - usage.sentToday) : null;
 
   async function suggestFirstLines() {
@@ -143,7 +166,15 @@ export function EmailComposeModal({
       const res = await fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: Array.from(selected), subject, body, replyInThread, templateStepId, icebreakers }),
+        body: JSON.stringify({
+          leadIds: Array.from(selected),
+          subject,
+          body,
+          replyInThread,
+          templateStepId,
+          icebreakers,
+          branded: layout === "branded" ? { headline, highlight, buttonLabel, buttonUrl } : null,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -273,6 +304,51 @@ export function EmailComposeModal({
                     Fallback if empty: {"{{first_name|there}}"}
                   </span>
                 </div>
+                <div className="flex items-center gap-1 text-xs">
+                  <span className="mr-1 text-zinc-500">Layout:</span>
+                  {(["plain", "branded"] as const).map((l) => (
+                    <button
+                      key={l}
+                      type="button"
+                      onClick={() => setLayout(l)}
+                      className={`rounded-md border px-2.5 py-1 ${layout === l ? "border-blue-500/60 bg-blue-500/15 text-zinc-100" : "border-white/10 text-zinc-400 hover:bg-white/5"}`}
+                    >
+                      {l === "plain" ? "Plain (best for first contact)" : "Branded (Releasit design)"}
+                    </button>
+                  ))}
+                </div>
+                {layout === "branded" && (
+                  <div className="grid grid-cols-1 gap-2 rounded-lg border border-white/10 bg-white/[0.02] p-3 md:grid-cols-2">
+                    <input
+                      value={headline}
+                      onChange={(e) => setHeadline(e.target.value)}
+                      placeholder="Headline (bold, black) — required"
+                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50 md:col-span-2"
+                    />
+                    <input
+                      value={highlight}
+                      onChange={(e) => setHighlight(e.target.value)}
+                      placeholder="Highlight line under it (orange) — optional"
+                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50 md:col-span-2"
+                    />
+                    <input
+                      value={buttonLabel}
+                      onChange={(e) => setButtonLabel(e.target.value)}
+                      placeholder="Button text — optional, e.g. Book a 15-min call"
+                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                    />
+                    <input
+                      value={buttonUrl}
+                      onChange={(e) => setButtonUrl(e.target.value)}
+                      placeholder="Button link — https://…"
+                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                    />
+                    <p className="text-[11px] text-zinc-600 md:col-span-2">
+                      The greeting &ldquo;HI {"{{FIRST_NAME}}"}&rdquo;, logo, divider and footer are added automatically. In the message: blank line = new paragraph,
+                      &ldquo;- &rdquo; = bullet, &ldquo;1. Title&rdquo; = numbered step (text below it on the next lines), **bold**, links work as-is.
+                    </p>
+                  </div>
+                )}
                 <input
                   ref={subjectRef}
                   value={subject}
@@ -312,10 +388,17 @@ export function EmailComposeModal({
                       ))}
                     </select>
                   </div>
-                  <div className="min-h-[24rem] flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm leading-relaxed text-zinc-300">
-                    <p className="mb-2 font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
-                    {preview.body}
-                  </div>
+                  {brandedHtml ? (
+                    <div className="flex min-h-[24rem] flex-1 flex-col overflow-hidden rounded-lg border border-white/10">
+                      <p className="border-b border-white/10 bg-white/[0.02] px-4 py-2 text-sm font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
+                      <iframe title="Email preview" srcDoc={brandedHtml} sandbox="" className="min-h-[36rem] w-full flex-1 bg-white" />
+                    </div>
+                  ) : (
+                    <div className="min-h-[24rem] flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm leading-relaxed text-zinc-300">
+                      <p className="mb-2 font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
+                      {preview.body}
+                    </div>
+                  )}
                   {unknown.length > 0 && (
                     <p className="mt-1 text-xs text-amber-400">
                       Not a known variable (check the spelling): {unknown.map((k) => `{{${k}}}`).join(", ")}

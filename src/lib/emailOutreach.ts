@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
 import { movesOnReply, moveLeadWithCopies, nextOutreachStage, revertReplyMove } from "@/lib/crmMoves";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
+import { brandedToPlainText, renderBrandedEmail } from "@/lib/emailHtml";
 import {
   TEAMMATE_WINDOW_DAYS,
   findSuppression,
@@ -16,6 +17,9 @@ const GAP_BETWEEN_SENDS_MS = 1200;
 const INTERESTED_STAGE = "Responded with Interest";
 const DISINTEREST_STAGE = "Responded with Disinterest";
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Optional branded HTML layout; every field may use {{variables}}. */
+export type BrandedLayout = { headline: string; highlight?: string; buttonLabel?: string; buttonUrl?: string };
 
 export type SendResult = { leadId: string; name: string; status: "sent" | "skipped" | "failed"; detail?: string };
 
@@ -43,6 +47,7 @@ export async function sendOutreachEmails(args: {
   replyInThread: boolean;
   templateStepId?: string | null;
   icebreakers?: Record<string, string>;
+  branded?: BrandedLayout | null;
 }): Promise<SendResult[]> {
   const token = await gmailAccessToken(args.senderEmail);
   const { dailyCap } = await getEmailSettings();
@@ -106,7 +111,9 @@ export async function sendOutreachEmails(args: {
     const existing = args.replyInThread
       ? await prisma.emailThread.findFirst({ where: { leadId, ownerEmail: args.senderEmail, bouncedAt: null }, orderBy: { lastSentAt: "desc" } })
       : null;
-    const missing = missingVariables(`${existing ? "" : args.subject}\n${args.body}`, info, sender);
+    const b = args.branded;
+    const brandedText = b ? [b.headline, b.highlight, b.buttonLabel, b.buttonUrl].filter(Boolean).join("\n") : "";
+    const missing = missingVariables(`${existing ? "" : args.subject}\n${args.body}\n${brandedText}`, info, sender);
     if (missing.length) {
       skip(`Blank ${missing.map((k) => `{{${k}}}`).join(", ")} — add a fallback or fill it in`);
       continue;
@@ -119,12 +126,26 @@ export async function sendOutreachEmails(args: {
           ? existing.subject
           : `Re: ${existing.subject}`
         : renderTemplate(args.subject, info, sender);
+      const text = renderTemplate(args.body, info, sender);
+      const branded = b
+        ? {
+            greeting: renderTemplate("Hi {{first_name|there}}", info, sender),
+            headline: renderTemplate(b.headline, info, sender),
+            highlight: b.highlight ? renderTemplate(b.highlight, info, sender) : undefined,
+            body: text,
+            buttonLabel: b.buttonLabel ? renderTemplate(b.buttonLabel, info, sender) : undefined,
+            buttonUrl: b.buttonUrl ? renderTemplate(b.buttonUrl, info, sender) : undefined,
+            senderName: args.senderName,
+            senderEmail: args.senderEmail,
+          }
+        : null;
       const sent = await sendGmail(token, {
         from: args.senderEmail,
         fromName: args.senderName,
         to,
         subject,
-        body: renderTemplate(args.body, info, sender),
+        body: branded ? brandedToPlainText(branded) : text,
+        html: branded ? renderBrandedEmail(branded) : undefined,
         threadId: existing?.gmailThreadId,
         inReplyTo: existing?.lastMessageId,
       });

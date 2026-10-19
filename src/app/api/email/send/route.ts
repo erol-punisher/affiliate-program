@@ -32,6 +32,18 @@ export async function POST(request: NextRequest) {
       body: text,
       replyInThread: body?.replyInThread !== false,
       templateStepId: typeof body?.templateStepId === "string" ? body.templateStepId : null,
+      branded:
+        body?.branded && typeof body.branded.headline === "string" && body.branded.headline.trim()
+          ? {
+              headline: body.branded.headline,
+              highlight: typeof body.branded.highlight === "string" ? body.branded.highlight : undefined,
+              buttonLabel: typeof body.branded.buttonLabel === "string" ? body.branded.buttonLabel : undefined,
+              buttonUrl:
+                typeof body.branded.buttonUrl === "string" && /^https?:\/\//.test(body.branded.buttonUrl.trim())
+                  ? body.branded.buttonUrl.trim()
+                  : undefined,
+            }
+          : null,
       icebreakers:
         body?.icebreakers && typeof body.icebreakers === "object"
           ? Object.fromEntries(Object.entries(body.icebreakers).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""))
