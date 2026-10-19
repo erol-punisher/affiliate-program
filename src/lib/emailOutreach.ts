@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
 import { movesOnReply, moveLeadWithCopies, nextOutreachStage, revertReplyMove } from "@/lib/crmMoves";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
-import { brandedToPlainText, renderBrandedEmail } from "@/lib/emailHtml";
+import { LOGO_CID, brandedToPlainText, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
+import { RELEASIT_LOGO_PNG_BASE64 } from "@/lib/emailLogo";
 import {
   TEAMMATE_WINDOW_DAYS,
   findSuppression,
@@ -19,7 +20,14 @@ const DISINTEREST_STAGE = "Responded with Disinterest";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Optional branded HTML layout; every field may use {{variables}}. */
-export type BrandedLayout = { headline: string; highlight?: string; buttonLabel?: string; buttonUrl?: string };
+export type BrandedLayout = {
+  headline: string;
+  highlight?: string;
+  buttonLabel?: string;
+  buttonUrl?: string;
+  colors?: EmailColors;
+  buttonPosition?: number | null;
+};
 
 export type SendResult = { leadId: string; name: string; status: "sent" | "skipped" | "failed"; detail?: string };
 
@@ -137,6 +145,8 @@ export async function sendOutreachEmails(args: {
             buttonUrl: b.buttonUrl ? renderTemplate(b.buttonUrl, info, sender) : undefined,
             senderName: args.senderName,
             senderEmail: args.senderEmail,
+            colors: b.colors,
+            buttonPosition: b.buttonPosition,
           }
         : null;
       const sent = await sendGmail(token, {
@@ -145,7 +155,8 @@ export async function sendOutreachEmails(args: {
         to,
         subject,
         body: branded ? brandedToPlainText(branded) : text,
-        html: branded ? renderBrandedEmail(branded) : undefined,
+        html: branded ? renderBrandedEmail(branded, { logoSrc: `cid:${LOGO_CID}` }) : undefined,
+        inlineImages: branded ? [{ cid: LOGO_CID, contentType: "image/png", base64: RELEASIT_LOGO_PNG_BASE64, filename: "releasit-logo.png" }] : undefined,
         threadId: existing?.gmailThreadId,
         inReplyTo: existing?.lastMessageId,
       });

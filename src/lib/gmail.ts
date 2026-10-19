@@ -37,7 +37,12 @@ function encodeHeader(value: string): string {
 /** Sends a plain-text email; pass threadId + inReplyTo to send it as a reply in an existing thread. */
 export async function sendGmail(
   token: string,
-  msg: { from: string; fromName?: string; to: string; subject: string; body: string; html?: string; threadId?: string; inReplyTo?: string },
+  msg: { from: string; fromName?: string; to: string; subject: string; body: string; html?: string;
+    /** Images referenced from the HTML as cid:<cid>, sent as inline attachments. */
+    inlineImages?: { cid: string; contentType: string; base64: string; filename: string }[];
+    threadId?: string;
+    inReplyTo?: string;
+  },
 ): Promise<{ id: string; threadId: string; messageId: string }> {
   // base64 wrapped at 76 chars, as MIME expects
   const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64").replace(/.{76}/g, "$&\r\n");
@@ -55,7 +60,22 @@ export async function sendGmail(
     headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
     const part = (type: string, content: string) =>
       `--${boundary}\r\nContent-Type: ${type}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(content)}\r\n`;
-    raw = `${headers.join("\r\n")}\r\n\r\n${part("text/plain", msg.body)}${part("text/html", msg.html)}--${boundary}--`;
+    let htmlPart = part("text/html", msg.html);
+    if (msg.inlineImages?.length) {
+      // text/html + its images wrapped in multipart/related so cid: references resolve.
+      const rel = `rel_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+      const images = msg.inlineImages
+        .map(
+          (img) =>
+            `--${rel}\r\nContent-Type: ${img.contentType}; name="${img.filename}"\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <${img.cid}>\r\nContent-Disposition: inline; filename="${img.filename}"\r\n\r\n${img.base64.replace(/.{76}/g, "$&\r\n")}\r\n`,
+        )
+        .join("");
+      htmlPart =
+        `--${boundary}\r\nContent-Type: multipart/related; boundary="${rel}"\r\n\r\n` +
+        `--${rel}\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(msg.html)}\r\n` +
+        `${images}--${rel}--\r\n`;
+    }
+    raw = `${headers.join("\r\n")}\r\n\r\n${part("text/plain", msg.body)}${htmlPart}--${boundary}--`;
   } else {
     headers.push('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64");
     raw = `${headers.join("\r\n")}\r\n\r\n${b64(msg.body)}`;

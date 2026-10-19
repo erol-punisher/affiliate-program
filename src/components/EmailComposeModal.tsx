@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TEMPLATE_VARIABLES, missingVariables, renderTemplate, unknownVariables, type TemplateLead } from "@/lib/emailTemplate";
-import { renderBrandedEmail } from "@/lib/emailHtml";
+import { COLOR_PRESETS, DEFAULT_COLORS, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
 
 export type EmailRecipient = {
   id: string;
@@ -53,6 +53,9 @@ export function EmailComposeModal({
   const [highlight, setHighlight] = useState("");
   const [buttonLabel, setButtonLabel] = useState("");
   const [buttonUrl, setButtonUrl] = useState("");
+  const [colors, setColors] = useState<EmailColors>(DEFAULT_COLORS);
+  const [buttonPosition, setButtonPosition] = useState<number | null>(null);
+  const previewFrameRef = useRef<HTMLIFrameElement>(null);
   const [icebreakers, setIcebreakers] = useState<Record<string, string>>({});
   const [suggesting, setSuggesting] = useState(false);
   const [usage, setUsage] = useState<{ sentToday: number; dailyCap: number } | null>(null);
@@ -70,6 +73,16 @@ export function EmailComposeModal({
       .then((r) => r.json())
       .then((d) => setCadences(d.cadences ?? []))
       .catch(() => setCadences([]));
+  }, []);
+
+  // The preview iframe reports where the button was dropped.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.source !== previewFrameRef.current?.contentWindow) return;
+      if (e.data?.type === "releasit-button-pos" && Number.isInteger(e.data.position)) setButtonPosition(e.data.position);
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }, []);
 
   const withEmail = recipients.filter(hasEmail);
@@ -105,7 +118,9 @@ export function EmailComposeModal({
           buttonUrl: buttonUrl ? renderTemplate(buttonUrl, toLead(previewRecipient), sender) : undefined,
           senderName: sender.name,
           senderEmail: sender.email,
-        })
+          colors,
+          buttonPosition,
+        }, { editable: true })
       : null;
 
   function insertVariable(key: string) {
@@ -173,7 +188,7 @@ export function EmailComposeModal({
           replyInThread,
           templateStepId,
           icebreakers,
-          branded: layout === "branded" ? { headline, highlight, buttonLabel, buttonUrl } : null,
+          branded: layout === "branded" ? { headline, highlight, buttonLabel, buttonUrl, colors, buttonPosition } : null,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -343,6 +358,52 @@ export function EmailComposeModal({
                       placeholder="Button link — https://…"
                       className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
                     />
+                    <div className="flex flex-wrap items-center gap-2 text-xs md:col-span-2">
+                      <span className="text-zinc-500">Colours:</span>
+                      {COLOR_PRESETS.map((p) => {
+                        const active = p.colors.accent === colors.accent && p.colors.secondary === colors.secondary && p.colors.button === colors.button;
+                        return (
+                          <button
+                            key={p.key}
+                            type="button"
+                            title={p.label}
+                            onClick={() => setColors(p.colors)}
+                            className={`flex items-center gap-1 rounded-md border px-2 py-1 ${active ? "border-blue-500/60 bg-blue-500/15 text-zinc-100" : "border-white/10 text-zinc-400 hover:bg-white/5"}`}
+                          >
+                            <span className="h-3 w-3 rounded-full" style={{ background: p.colors.accent }} />
+                            <span className="h-3 w-3 rounded-full" style={{ background: p.colors.secondary }} />
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-400 md:col-span-2">
+                      {(
+                        [
+                          ["accent", "Main colour (greeting, highlight, steps, long line)"],
+                          ["secondary", "Second colour (short line, links)"],
+                          ["button", "Button"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={colors[key]}
+                            onChange={(e) => setColors((c) => ({ ...c, [key]: e.target.value }))}
+                            className="h-6 w-8 cursor-pointer rounded border border-white/10 bg-transparent"
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-zinc-600 md:col-span-2">
+                      Drag the button in the preview to move it.{" "}
+                      {buttonPosition !== null && (
+                        <button type="button" onClick={() => setButtonPosition(null)} className="text-blue-400 hover:underline">
+                          Reset to bottom
+                        </button>
+                      )}
+                    </p>
                     <p className="text-[11px] text-zinc-600 md:col-span-2">
                       The greeting &ldquo;HI {"{{FIRST_NAME}}"}&rdquo;, logo, divider and footer are added automatically. In the message: blank line = new paragraph,
                       &ldquo;- &rdquo; = bullet, &ldquo;1. Title&rdquo; = numbered step (text below it on the next lines), **bold**, links work as-is.
@@ -391,7 +452,7 @@ export function EmailComposeModal({
                   {brandedHtml ? (
                     <div className="flex min-h-[24rem] flex-1 flex-col overflow-hidden rounded-lg border border-white/10">
                       <p className="border-b border-white/10 bg-white/[0.02] px-4 py-2 text-sm font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
-                      <iframe title="Email preview" srcDoc={brandedHtml} sandbox="" className="min-h-[36rem] w-full flex-1 bg-white" />
+                      <iframe ref={previewFrameRef} title="Email preview" srcDoc={brandedHtml} sandbox="allow-scripts" className="min-h-[36rem] w-full flex-1 bg-white" />
                     </div>
                   ) : (
                     <div className="min-h-[24rem] flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm leading-relaxed text-zinc-300">

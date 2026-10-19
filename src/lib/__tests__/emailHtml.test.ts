@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodyToHtml, brandedToPlainText, renderBrandedEmail } from "../emailHtml";
+import { bodyToHtml, brandedToPlainText, renderBrandedEmail, sanitizeColors } from "../emailHtml";
 
 const base = {
   greeting: "Hi Erol",
@@ -28,7 +28,7 @@ describe("bodyToHtml", () => {
 describe("renderBrandedEmail", () => {
   it("includes logo, greeting, escaped headline, and the button only when complete", () => {
     const html = renderBrandedEmail({ ...base, buttonLabel: "Book", buttonUrl: "https://cal.com/x" });
-    expect(html).toContain("releasit-logo.png");
+    expect(html).toContain("data:image/png;base64,");
     expect(html).toContain("Hi Erol");
     expect(html).toContain("&lt;run&gt; blind &amp; more");
     expect(html).toContain('href="https://cal.com/x"');
@@ -40,5 +40,43 @@ describe("renderBrandedEmail", () => {
     expect(text).toContain("Hi Erol,");
     expect(text).toContain("Use Pixels.");
     expect(text).toContain("Book: https://cal.com/x");
+  });
+});
+
+describe("colours, button position and logo", () => {
+  const withButton = { ...base, body: "One\n\nTwo", buttonLabel: "Book", buttonUrl: "https://cal.com/x" };
+
+  it("only accepts #rrggbb colours", () => {
+    expect(sanitizeColors({ accent: "#123abc", secondary: "red;x:y", button: 5 })).toEqual({ accent: "#123abc", secondary: "#2458D4", button: "#EE8B4F" });
+  });
+
+  it("uses the chosen colours", () => {
+    const html = renderBrandedEmail({ ...withButton, colors: { accent: "#111222", secondary: "#333444", button: "#555666" } });
+    expect(html).toContain("color:#111222");
+    expect(html).toContain("background:#333444");
+    expect(html).toContain("background:#555666");
+  });
+
+  it("places the button before the given block, defaulting to the end", () => {
+    const at = (p: number | null) => {
+      const html = renderBrandedEmail({ ...withButton, buttonPosition: p });
+      return [html.indexOf(">One<"), html.indexOf("Book</a>"), html.indexOf(">Two<")];
+    };
+    const [one0, btn0] = at(0);
+    expect(btn0).toBeLessThan(one0);
+    const [one1, btn1, two1] = at(1);
+    expect(one1).toBeLessThan(btn1);
+    expect(btn1).toBeLessThan(two1);
+    const [, btnEnd, twoEnd] = at(null);
+    expect(twoEnd).toBeLessThan(btnEnd);
+    expect(brandedToPlainText({ ...withButton, buttonPosition: 1 })).toMatch(/One\n\nBook: https:\/\/cal.com\/x\n\nTwo/);
+  });
+
+  it("uses the given logo src and only adds drag code in editable previews", () => {
+    expect(renderBrandedEmail(withButton, { logoSrc: "cid:releasit-logo" })).toContain('src="cid:releasit-logo"');
+    expect(renderBrandedEmail(withButton)).not.toContain("<script");
+    const editable = renderBrandedEmail(withButton, { editable: true });
+    expect(editable).toContain('draggable="true"');
+    expect(editable.match(/data-pos=/g)?.length).toBe(2);
   });
 });

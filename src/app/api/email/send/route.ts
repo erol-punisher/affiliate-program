@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { GmailNotConnectedError } from "@/lib/gmail";
 import { MAX_EMAILS_PER_SEND, sendOutreachEmails } from "@/lib/emailOutreach";
+import { sanitizeColors } from "@/lib/emailHtml";
 
 // Sends are spaced ~1s apart, so a full batch needs more than the default duration.
 export const maxDuration = 60;
@@ -42,6 +43,8 @@ export async function POST(request: NextRequest) {
                 typeof body.branded.buttonUrl === "string" && /^https?:\/\//.test(body.branded.buttonUrl.trim())
                   ? body.branded.buttonUrl.trim()
                   : undefined,
+              colors: sanitizeColors(body.branded.colors),
+              buttonPosition: Number.isInteger(body.branded.buttonPosition) ? body.branded.buttonPosition : null,
             }
           : null,
       icebreakers:
