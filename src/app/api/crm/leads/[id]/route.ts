@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { parseOptionalDate, parseOptionalInt, parseOptionalString } from "@/lib/crmLead";
 import { recordStageEvent } from "@/lib/outreachStats";
+import { relabelLeadThreads } from "@/lib/emailOutreach";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSessionWithFreshToken();
@@ -77,6 +78,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     return updated;
   });
+  // Keep the lead's Gmail thread labels in step with its new stage.
+  if (data.stageId) after(() => relabelLeadThreads(lead.sourceLeadId ?? lead.id));
   return NextResponse.json({ lead });
 }
 

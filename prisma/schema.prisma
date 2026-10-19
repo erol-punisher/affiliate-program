@@ -368,7 +368,8 @@ model Lead {
   stageId String
   stage   Stage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
-  stageEvents LeadStageEvent[]
+  stageEvents  LeadStageEvent[]
+  emailThreads EmailThread[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -406,4 +407,50 @@ model AppSetting {
   value     String
   updatedBy String?
   updatedAt DateTime @updatedAt
+}
+
+// A dashboard user's Gmail access, granted via "Connect Gmail". The refresh
+// token is AES-GCM encrypted with a key derived from SESSION_SECRET.
+model GmailConnection {
+  email                 String    @id
+  encryptedRefreshToken String
+  lastSyncAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Cache of Gmail label ids per mailbox, keyed by full label name
+// (e.g. "CRM/EuroAffiliates ReachOut/Contacted (2)").
+model GmailLabel {
+  ownerEmail   String
+  name         String
+  gmailLabelId String
+
+  @@id([ownerEmail, name])
+}
+
+// One Gmail thread started (or continued) from the dashboard with a CRM lead.
+// leadId is the original lead (never a mirrored copy).
+model EmailThread {
+  id String @id @default(cuid())
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  ownerEmail      String
+  gmailThreadId   String
+  lastMessageId   String // RFC 822 Message-ID of our latest message, for threading follow-ups
+  toEmail         String
+  subject         String
+  labelName       String?
+  sentCount       Int       @default(1)
+  lastSentAt      DateTime
+  repliedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerEmail, gmailThreadId])
+  @@index([leadId])
 }

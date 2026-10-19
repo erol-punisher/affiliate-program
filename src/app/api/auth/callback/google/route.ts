@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeCodeForTokens, fetchUserInfo } from "@/lib/googleOAuth";
-import { createSessionCookie } from "@/lib/session";
+import { createSessionCookie, getSession } from "@/lib/session";
+import { GMAIL_SCOPE } from "@/lib/gmail";
+import { encryptSecret } from "@/lib/secretBox";
+
+// "Connect Gmail" reuses this callback; its state is prefixed so it can be told apart from a login.
+const GMAIL_STATE_PREFIX = "gmail.";
 import { prisma } from "@/lib/db";
 
 const STATE_COOKIE = "oauth_state";
@@ -34,6 +39,23 @@ export async function GET(request: NextRequest) {
   }
 
   const userInfo = await fetchUserInfo(tokens.access_token);
+
+  if (state.startsWith(GMAIL_STATE_PREFIX)) {
+    const crm = (status: string) => {
+      const response = NextResponse.redirect(new URL(`/crm?gmail=${status}`, request.nextUrl.origin));
+      response.cookies.delete(STATE_COOKIE);
+      return response;
+    };
+    const session = await getSession();
+    if (!session || session.email.toLowerCase() !== userInfo.email.toLowerCase()) return crm("wrong-account");
+    if (!tokens.scope?.split(" ").includes(GMAIL_SCOPE)) return crm("not-granted");
+    await prisma.gmailConnection.upsert({
+      where: { email: session.email },
+      update: { encryptedRefreshToken: encryptSecret(tokens.refresh_token) },
+      create: { email: session.email, encryptedRefreshToken: encryptSecret(tokens.refresh_token) },
+    });
+    return crm("connected");
+  }
 
   if (!userInfo.email_verified) {
     return loginError("Your Google email is not verified.");

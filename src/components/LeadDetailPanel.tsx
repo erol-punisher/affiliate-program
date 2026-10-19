@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ArrowLeftIcon, CheckIcon, PencilIcon, UsersIcon, XIcon } from "@/components/icons";
 
 export type LeadDetail = {
@@ -227,10 +228,8 @@ export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose
           </section>
         </div>
 
-        <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-5">
-          <p className="text-sm text-zinc-600">
-            No activity, notes, or files tracked for this lead yet.
-          </p>
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <EmailHistory leadId={lead.id} />
         </div>
       </div>
 
@@ -238,5 +237,78 @@ export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose
         <p className="text-xs text-zinc-500">Last modified {formatDate(lead.updatedAt)}</p>
       </div>
     </div>
+  );
+}
+
+type EmailThreadSummary = {
+  id: string;
+  ownerEmail: string;
+  toEmail: string;
+  subject: string;
+  sentCount: number;
+  lastSentAt: string;
+  repliedAt: string | null;
+  labelName: string | null;
+  gmailThreadId: string;
+};
+
+function EmailHistory({ leadId }: { leadId: string }) {
+  const [threads, setThreads] = useState<EmailThreadSummary[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`/api/email/threads?leadId=${encodeURIComponent(leadId)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setThreads(d.threads ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setThreads([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId]);
+
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Emails</h3>
+      {threads === null ? (
+        <p className="text-sm text-zinc-600">Loading…</p>
+      ) : threads.length === 0 ? (
+        <p className="text-sm text-zinc-600">No emails sent from the dashboard yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {threads.map((t) => (
+            <li key={t.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-sm text-zinc-100">{t.subject}</p>
+                {t.repliedAt ? (
+                  <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
+                    Replied {formatDate(t.repliedAt)}
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-[10px] text-zinc-500">No reply yet</span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                {t.sentCount} {t.sentCount === 1 ? "email" : "emails"} from {t.ownerEmail} to {t.toEmail} · last {formatDate(t.lastSentAt)}
+              </p>
+              <div className="mt-1 flex items-center gap-3 text-xs">
+                {t.labelName && <span className="text-zinc-500">Label: {t.labelName.replace(/\//g, " / ")}</span>}
+                <a
+                  href={`https://mail.google.com/mail/u/${encodeURIComponent(t.ownerEmail)}/#all/${t.gmailThreadId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  Open in Gmail
+                </a>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

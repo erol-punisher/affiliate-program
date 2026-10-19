@@ -15,12 +15,12 @@ function getEnv(name: string): string {
   return value;
 }
 
-export function buildGoogleAuthUrl(state: string): string {
+export function buildGoogleAuthUrl(state: string, opts: { extraScopes?: string[]; loginHint?: string } = {}): string {
   const params = new URLSearchParams({
     client_id: getEnv("GOOGLE_CLIENT_ID"),
     redirect_uri: getEnv("GOOGLE_REDIRECT_URI"),
     response_type: "code",
-    scope: SCOPES,
+    scope: [SCOPES, ...(opts.extraScopes ?? [])].join(" "),
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
@@ -31,6 +31,9 @@ export function buildGoogleAuthUrl(state: string): string {
   if (allowedDomain) {
     params.set("hd", allowedDomain);
   }
+  if (opts.loginHint) {
+    params.set("login_hint", opts.loginHint);
+  }
 
   return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
@@ -39,6 +42,7 @@ type TokenResponse = {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
+  scope?: string;
   id_token?: string;
   token_type: string;
 };

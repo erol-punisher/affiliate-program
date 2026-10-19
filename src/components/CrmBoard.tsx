@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import Link from "next/link";
-import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon } from "@/components/icons";
+import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon, MailIcon } from "@/components/icons";
+import { EmailComposeModal, type EmailRecipient } from "@/components/EmailComposeModal";
 import { CsvImportModal } from "@/components/CsvImportModal";
 import { LeadModal, type LeadFormValues, EMPTY_LEAD_FORM } from "@/components/LeadModal";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
@@ -112,8 +113,34 @@ export function CrmBoard({ userEmail }: Props) {
   const [confirmDeleteStageId, setConfirmDeleteStageId] = useState<string | null>(null);
   const [deletingStage, setDeletingStage] = useState(false);
 
+  const [composeFor, setComposeFor] = useState<EmailRecipient[] | null>(null);
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [gmailNotice, setGmailNotice] = useState<string | null>(null);
+
   useEffect(() => {
     void loadGroups();
+    // Gmail: connection status, any result of the connect flow, and a reply check that may move leads.
+    void fetch("/api/gmail/status")
+      .then((r) => r.json())
+      .then((d) => setGmailConnected(!!d.connected))
+      .catch(() => setGmailConnected(false));
+    const result = new URLSearchParams(window.location.search).get("gmail");
+    if (result) {
+      window.history.replaceState(null, "", "/crm");
+      const notice =
+        result === "connected"
+          ? "Gmail connected — you can now email leads from the CRM."
+          : result === "wrong-account"
+            ? "Connect the same Google account you're signed in with."
+            : "Gmail access wasn't granted, so emails can't be sent yet.";
+      void Promise.resolve().then(() => setGmailNotice(notice));
+    }
+    void fetch("/api/email/sync", { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.moved > 0) void loadGroups();
+      })
+      .catch(() => {});
   }, []);
 
   async function loadGroups(preferGroupId?: string, preferPipelineId?: string) {
@@ -532,6 +559,21 @@ export function CrmBoard({ userEmail }: Props) {
             <p className="mt-0.5 text-sm text-zinc-500">Track leads through your pipelines</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {gmailConnected !== null &&
+              (gmailConnected ? (
+                <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 px-3 py-1.5 text-sm text-emerald-300" title="Emails go out from your Gmail">
+                  <MailIcon className="h-3.5 w-3.5" />
+                  Gmail connected
+                </span>
+              ) : (
+                <a
+                  href="/api/gmail/connect"
+                  className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
+                >
+                  <MailIcon className="h-3.5 w-3.5" />
+                  Connect Gmail
+                </a>
+              ))}
             <Link
               href="/crm/analytics"
               className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
@@ -552,6 +594,14 @@ export function CrmBoard({ userEmail }: Props) {
 
         {loadError && (
           <p className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400">{loadError}</p>
+        )}
+        {gmailNotice && (
+          <p className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300">
+            {gmailNotice}
+            <button type="button" onClick={() => setGmailNotice(null)} className="text-xs text-zinc-500 hover:text-zinc-300">
+              Dismiss
+            </button>
+          </p>
         )}
 
         {!groups && !loadError && (
@@ -910,6 +960,19 @@ export function CrmBoard({ userEmail }: Props) {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/stage:opacity-100">
+                        {stage.leads.some((l) => l.email) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setComposeFor(stage.leads);
+                            }}
+                            title="Email leads in this stage"
+                            className="text-zinc-500 transition-colors hover:text-zinc-200"
+                          >
+                            <MailIcon className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -969,6 +1032,19 @@ export function CrmBoard({ userEmail }: Props) {
                               )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/lead:opacity-100">
+                              {lead.email && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setComposeFor([lead]);
+                                  }}
+                                  title="Email"
+                                  className="text-zinc-500 transition-colors hover:text-zinc-200"
+                                >
+                                  <MailIcon className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1111,6 +1187,15 @@ export function CrmBoard({ userEmail }: Props) {
             setViewingLead(null);
           }}
           onChangeStage={(stageId) => void changeViewingLeadStage(stageId)}
+        />
+      )}
+
+      {composeFor && activePipeline && (
+        <EmailComposeModal
+          recipients={composeFor}
+          pipelineName={activePipeline.name}
+          onClose={() => setComposeFor(null)}
+          onSent={() => void loadGroups(activeGroupId ?? undefined, activePipeline.id)}
         />
       )}
 
