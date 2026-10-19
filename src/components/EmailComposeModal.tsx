@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TEMPLATE_VARIABLES, missingVariables, renderTemplate, unknownVariables, type TemplateLead } from "@/lib/emailTemplate";
-import { COLOR_PRESETS, DEFAULT_COLORS, buttonSnippet, buttonsToPlainText, moveBlock, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
+import { COLOR_PRESETS, DEFAULT_COLORS, buttonSnippet, buttonsToPlainText, moveBlock, renderBrandedEmail, renderPlainEmail, type EmailColors } from "@/lib/emailHtml";
+import { SignatureEditor } from "@/components/SignatureEditor";
 
 export type EmailRecipient = {
   id: string;
@@ -51,6 +52,12 @@ export function EmailComposeModal({
   const [layout, setLayout] = useState<"plain" | "branded">("plain");
   const [headline, setHeadline] = useState("");
   const [highlight, setHighlight] = useState("");
+  const [signatureHtml, setSignatureHtml] = useState("");
+  const [useSignature, setUseSignature] = useState(false);
+  const [editingSignature, setEditingSignature] = useState(false);
+  const [testTo, setTestTo] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testStatus, setTestStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [buttonForm, setButtonForm] = useState<{ label: string; url: string } | null>(null);
   const [colors, setColors] = useState<EmailColors>(DEFAULT_COLORS);
   const previewFrameRef = useRef<HTMLIFrameElement>(null);
@@ -67,6 +74,13 @@ export function EmailComposeModal({
       .then((r) => r.json())
       .then((d) => setUsage({ sentToday: d.sentToday ?? 0, dailyCap: d.settings?.dailyCap ?? 50 }))
       .catch(() => setUsage(null));
+    void fetch("/api/email/signature")
+      .then((r) => r.json())
+      .then((d) => {
+        setSignatureHtml(d.html ?? "");
+        setUseSignature(!!d.html);
+      })
+      .catch(() => setSignatureHtml(""));
     void fetch("/api/templates/cadences")
       .then((r) => r.json())
       .then((d) => setCadences(d.cadences ?? []))
@@ -117,8 +131,11 @@ export function EmailComposeModal({
           senderName: sender.name,
           senderEmail: sender.email,
           colors,
+          signatureHtml: useSignature ? signatureHtml : null,
         }, { editable: true })
-      : null;
+      : layout === "plain" && previewRecipient && useSignature && signatureHtml
+        ? renderPlainEmail(renderTemplate(body, toLead(previewRecipient), sender), signatureHtml)
+        : null;
 
   function insertVariable(key: string) {
     const token = `{{${key}}}`;
@@ -191,6 +208,35 @@ export function EmailComposeModal({
     });
   }
 
+  async function sendTest() {
+    if (!previewRecipient) return;
+    const to = (testTo ?? gmail?.email ?? "").trim();
+    setTesting(true);
+    setTestStatus(null);
+    try {
+      const res = await fetch("/api/email/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          previewLeadId: previewRecipient.id,
+          subject,
+          body,
+          icebreakers,
+          branded: layout === "branded" ? { headline, highlight, colors } : null,
+          useSignature: useSignature && !!signatureHtml,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Failed (${res.status})`);
+      setTestStatus({ ok: true, text: `Test sent to ${to} (as ${previewRecipient.name} would see it)` });
+    } catch (err) {
+      setTestStatus({ ok: false, text: err instanceof Error ? err.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
   async function send() {
     setSending(true);
     setError(null);
@@ -206,6 +252,7 @@ export function EmailComposeModal({
           templateStepId,
           icebreakers,
           branded: layout === "branded" ? { headline, highlight, colors } : null,
+          useSignature: useSignature && !!signatureHtml,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -468,6 +515,23 @@ export function EmailComposeModal({
                   <input type="checkbox" checked={replyInThread} onChange={(e) => setReplyInThread(e.target.checked)} />
                   If I&apos;ve emailed them before, send this as a reply in that thread
                 </label>
+                <div className="flex items-center gap-3 text-xs text-zinc-400">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={useSignature && !!signatureHtml} disabled={!signatureHtml} onChange={(e) => setUseSignature(e.target.checked)} />
+                    {signatureHtml ? "Add my signature" : "Add my signature (none saved yet)"}
+                  </label>
+                  <button type="button" onClick={() => setEditingSignature((v) => !v)} className="text-blue-400 hover:underline">
+                    {editingSignature ? "Close signature editor" : signatureHtml ? "Edit signature" : "Set up signature"}
+                  </button>
+                </div>
+                {editingSignature && (
+                  <SignatureEditor
+                    onSaved={(html) => {
+                      setSignatureHtml(html);
+                      setUseSignature(!!html);
+                    }}
+                  />
+                )}
               </section>
 
               {preview && previewRecipient ? (
@@ -559,6 +623,31 @@ export function EmailComposeModal({
                 {usage.sentToday} of {usage.dailyCap} sent today
                 {remainingToday !== null && selected.size > remainingToday && ` — only ${remainingToday} more will go out`}
               </span>
+            )}
+            {previewRecipient && body.trim() && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-zinc-500">Send test to</span>
+                <input
+                  type="email"
+                  value={testTo ?? gmail.email}
+                  onChange={(e) => setTestTo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !testing) void sendTest();
+                  }}
+                  placeholder="you@shopcircle.co"
+                  className="w-60 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                />
+                <button
+                  type="button"
+                  disabled={testing || sending || (layout === "branded" && !headline.trim())}
+                  onClick={() => void sendTest()}
+                  title={`Sends one copy, filled in as ${previewRecipient.name} would get it. Nobody is moved or logged.`}
+                  className="rounded-md border border-white/10 px-3 py-1.5 text-sm text-zinc-200 hover:bg-white/5 disabled:opacity-50"
+                >
+                  {testing ? "Sending test…" : "Send test"}
+                </button>
+                {testStatus && <span className={`max-w-xs truncate text-xs ${testStatus.ok ? "text-emerald-400" : "text-red-400"}`} title={testStatus.text}>{testStatus.text}</span>}
+              </div>
             )}
             {blocked && <span className="text-xs text-amber-400">Fix the variables above to send</span>}
             <button type="button" onClick={onClose} disabled={sending} className="rounded-md border border-white/10 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/5">

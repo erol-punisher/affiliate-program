@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
 import { movesOnReply, moveLeadWithCopies, nextOutreachStage, revertReplyMove } from "@/lib/crmMoves";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
-import { LOGO_CID, brandedToPlainText, buttonsToPlainText, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
+import { LOGO_CID, brandedToPlainText, buttonsToPlainText, renderBrandedEmail, renderPlainEmail, sanitizeColors, type EmailColors } from "@/lib/emailHtml";
+import { getSignature, signatureToText } from "@/lib/emailSignature";
 import { RELEASIT_LOGO_PNG_BASE64 } from "@/lib/emailLogo";
 import {
   TEAMMATE_WINDOW_DAYS,
@@ -28,6 +29,114 @@ export type BrandedLayout = {
   colors?: EmailColors;
   buttonPosition?: number | null;
 };
+
+/** Validates the branded layout from a request body (null = plain). */
+export function parseBrandedLayout(raw: unknown): BrandedLayout | null {
+  const b = raw as Record<string, unknown> | null | undefined;
+  if (!b || typeof b.headline !== "string" || !b.headline.trim()) return null;
+  return {
+    headline: b.headline,
+    highlight: typeof b.highlight === "string" ? b.highlight : undefined,
+    buttonLabel: typeof b.buttonLabel === "string" ? b.buttonLabel : undefined,
+    buttonUrl: typeof b.buttonUrl === "string" && /^https?:\/\//.test(b.buttonUrl.trim()) ? b.buttonUrl.trim() : undefined,
+    colors: sanitizeColors(b.colors as Record<string, unknown> | undefined),
+    buttonPosition: Number.isInteger(b.buttonPosition) ? (b.buttonPosition as number) : null,
+  };
+}
+
+type ComposeLead = Parameters<typeof renderTemplate>[1];
+
+/**
+ * Renders one email for one lead: the plain-text part, plus an HTML part when
+ * branded or when a signature is attached (with the logo as an inline image).
+ */
+export function composeEmail(args: {
+  body: string;
+  branded?: BrandedLayout | null;
+  signatureHtml?: string | null;
+  lead: ComposeLead;
+  senderName: string;
+  senderEmail: string;
+}): { text: string; html?: string; inlineImages?: { cid: string; contentType: string; base64: string; filename: string }[] } {
+  const sender = { name: args.senderName, email: args.senderEmail };
+  const text = renderTemplate(args.body, args.lead, sender);
+  const signature = args.signatureHtml?.trim() || null;
+  const b = args.branded;
+  if (b) {
+    const branded = {
+      greeting: renderTemplate("Hi {{first_name|there}}", args.lead, sender),
+      headline: renderTemplate(b.headline, args.lead, sender),
+      highlight: b.highlight ? renderTemplate(b.highlight, args.lead, sender) : undefined,
+      body: text,
+      buttonLabel: b.buttonLabel ? renderTemplate(b.buttonLabel, args.lead, sender) : undefined,
+      buttonUrl: b.buttonUrl ? renderTemplate(b.buttonUrl, args.lead, sender) : undefined,
+      senderName: args.senderName,
+      senderEmail: args.senderEmail,
+      colors: b.colors,
+      buttonPosition: b.buttonPosition,
+      signatureHtml: signature,
+    };
+    const plain = brandedToPlainText(branded);
+    return {
+      text: signature ? plain.replace(`${args.senderName}\nReleasit · ${args.senderEmail}`, signatureToText(signature)) : plain,
+      html: renderBrandedEmail(branded, { logoSrc: `cid:${LOGO_CID}` }),
+      inlineImages: [{ cid: LOGO_CID, contentType: "image/png", base64: RELEASIT_LOGO_PNG_BASE64, filename: "releasit-logo.png" }],
+    };
+  }
+  const plainText = buttonsToPlainText(text);
+  if (!signature) return { text: plainText };
+  return { text: `${plainText}\n\n-- \n${signatureToText(signature)}`, html: renderPlainEmail(text, signature) };
+}
+
+/** Sends one rendered copy (subject prefixed "[Test]") to any address; no stage moves, logging or labels. */
+export async function sendTestEmail(args: {
+  senderEmail: string;
+  senderName: string;
+  to: string;
+  previewLeadId: string;
+  subject: string;
+  body: string;
+  branded?: BrandedLayout | null;
+  useSignature: boolean;
+  icebreakers?: Record<string, string>;
+}): Promise<void> {
+  const lead = await prisma.lead.findUnique({
+    where: { id: args.previewLeadId },
+    select: {
+      id: true,
+      name: true,
+      country: true,
+      username: true,
+      firstName: true,
+      followerCount: true,
+      websiteUrl: true,
+      socialsUrl: true,
+      referralLink: true,
+      stage: { select: { name: true, pipeline: { select: { name: true } } } },
+    },
+  });
+  if (!lead) throw new Error("Preview lead not found");
+  const token = await gmailAccessToken(args.senderEmail);
+  const info = { ...lead, pipelineName: lead.stage.pipeline.name, stageName: lead.stage.name, icebreaker: args.icebreakers?.[lead.id] ?? null };
+  const sender = { name: args.senderName, email: args.senderEmail };
+  const email = composeEmail({
+    body: args.body,
+    branded: args.branded,
+    signatureHtml: args.useSignature ? await getSignature(args.senderEmail) : null,
+    lead: info,
+    senderName: args.senderName,
+    senderEmail: args.senderEmail,
+  });
+  await sendGmail(token, {
+    from: args.senderEmail,
+    fromName: args.senderName,
+    to: args.to,
+    subject: `[Test] ${renderTemplate(args.subject, info, sender) || "(no subject)"}`,
+    body: email.text,
+    html: email.html,
+    inlineImages: email.inlineImages,
+  });
+}
 
 export type SendResult = { leadId: string; name: string; status: "sent" | "skipped" | "failed"; detail?: string };
 
@@ -56,8 +165,10 @@ export async function sendOutreachEmails(args: {
   templateStepId?: string | null;
   icebreakers?: Record<string, string>;
   branded?: BrandedLayout | null;
+  useSignature?: boolean;
 }): Promise<SendResult[]> {
   const token = await gmailAccessToken(args.senderEmail);
+  const signatureHtml = args.useSignature ? await getSignature(args.senderEmail) : null;
   const { dailyCap } = await getEmailSettings();
   let remaining = dailyCap - (await sentTodayCount(args.senderEmail));
 
@@ -134,29 +245,22 @@ export async function sendOutreachEmails(args: {
           ? existing.subject
           : `Re: ${existing.subject}`
         : renderTemplate(args.subject, info, sender);
-      const text = renderTemplate(args.body, info, sender);
-      const branded = b
-        ? {
-            greeting: renderTemplate("Hi {{first_name|there}}", info, sender),
-            headline: renderTemplate(b.headline, info, sender),
-            highlight: b.highlight ? renderTemplate(b.highlight, info, sender) : undefined,
-            body: text,
-            buttonLabel: b.buttonLabel ? renderTemplate(b.buttonLabel, info, sender) : undefined,
-            buttonUrl: b.buttonUrl ? renderTemplate(b.buttonUrl, info, sender) : undefined,
-            senderName: args.senderName,
-            senderEmail: args.senderEmail,
-            colors: b.colors,
-            buttonPosition: b.buttonPosition,
-          }
-        : null;
+      const email = composeEmail({
+        body: args.body,
+        branded: b,
+        signatureHtml,
+        lead: info,
+        senderName: args.senderName,
+        senderEmail: args.senderEmail,
+      });
       const sent = await sendGmail(token, {
         from: args.senderEmail,
         fromName: args.senderName,
         to,
         subject,
-        body: branded ? brandedToPlainText(branded) : buttonsToPlainText(text),
-        html: branded ? renderBrandedEmail(branded, { logoSrc: `cid:${LOGO_CID}` }) : undefined,
-        inlineImages: branded ? [{ cid: LOGO_CID, contentType: "image/png", base64: RELEASIT_LOGO_PNG_BASE64, filename: "releasit-logo.png" }] : undefined,
+        body: email.text,
+        html: email.html,
+        inlineImages: email.inlineImages,
         threadId: existing?.gmailThreadId,
         inReplyTo: existing?.lastMessageId,
       });

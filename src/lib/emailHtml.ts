@@ -42,6 +42,8 @@ export type BrandedEmail = {
   senderName: string;
   senderEmail: string;
   colors?: EmailColors;
+  /** Sender's saved signature (already sanitized HTML); replaces the default name/email footer. */
+  signatureHtml?: string | null;
   /** Legacy single button: goes before body block N; omitted/too large = after the body. Prefer [button: …](…) blocks in the body. */
   buttonPosition?: number | null;
 };
@@ -200,7 +202,7 @@ export function renderBrandedEmail(e: BrandedEmail, opts: RenderOptions = {}): s
 ${content}
 
 <tr><td style="padding:22px 0 0 0;border-top:1px solid #e6e6e6;font-family:${FONT};font-size:14px;line-height:1.6;color:${TEXT};">
-${escapeHtml(e.senderName)}<br><span style="color:${MUTED};">Releasit · ${escapeHtml(e.senderEmail)}</span>
+${e.signatureHtml ? e.signatureHtml : `${escapeHtml(e.senderName)}<br><span style="color:${MUTED};">Releasit · ${escapeHtml(e.senderEmail)}</span>`}
 </td></tr>
 <tr><td style="padding:18px 0 0 0;font-family:${FONT};font-size:12px;line-height:1.5;color:${MUTED};">
 Not the right fit? Just reply &ldquo;no thanks&rdquo; and we won&rsquo;t email you again.
@@ -223,4 +225,17 @@ export function brandedToPlainText(e: BrandedEmail): string {
   const parts = [`${e.greeting},`, [e.headline, e.highlight].filter(Boolean).join(" "), ...blocks.map(buttonsToPlainText)];
   parts.push(`${e.senderName}\nReleasit · ${e.senderEmail}`, `Not the right fit? Just reply "no thanks" and we won't email you again.`);
   return parts.join("\n\n");
+}
+
+/**
+ * Plain layout as simple HTML (looks like a normal Gmail message) so a signature
+ * with formatting/images can be attached. Buttons become "Text: link" lines.
+ */
+export function renderPlainEmail(body: string, signatureHtml: string): string {
+  const paragraphs = splitBlocks(buttonsToPlainText(body))
+    .map((b) => `<div>${b.split("\n").map((l) => inlineText(l, "#1a73e8")).join("<br>")}</div><div><br></div>`)
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div dir="ltr" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222222;">${paragraphs}<div>-- </div><div class="gmail_signature">${signatureHtml}</div></div>
+</body></html>`;
 }

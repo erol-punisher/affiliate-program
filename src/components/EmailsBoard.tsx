@@ -6,6 +6,7 @@ import { MailIcon, RefreshIcon } from "@/components/icons";
 import { EmailComposeModal, type EmailRecipient } from "@/components/EmailComposeModal";
 import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
 import { REPLY_CATEGORIES } from "@/lib/emailRules";
+import { SignatureEditor } from "@/components/SignatureEditor";
 
 type Lead = EmailRecipient;
 type Stage = { id: string; name: string; order: number; leads: Lead[] };
@@ -613,6 +614,12 @@ export function EmailsBoard({ userEmail }: { userEmail: string }) {
             )}
           </div>
           <p className="text-xs text-zinc-600">A reply counts for the template of the last email before it. At a few dozen emails a week, give it a month before drawing conclusions.</p>
+        </section>
+
+        <section className="flex flex-col gap-3 rounded-2xl border border-white/[0.08] bg-[#10141f] px-5 py-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">My signature</h2>
+          <p className="text-xs text-zinc-500">Added to the bottom of your emails (you can switch it off per email in the composer). Only your emails use it.</p>
+          <SignatureEditor />
         </section>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
