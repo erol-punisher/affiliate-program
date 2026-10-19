@@ -22,6 +22,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Optional branded HTML layout; every field may use {{variables}}. */
 export type BrandedLayout = {
+  /** Orange line above the headline; defaults to "Hi {{first_name|there}}", "" = none. */
+  greeting?: string;
   headline: string;
   highlight?: string;
   buttonLabel?: string;
@@ -30,11 +32,14 @@ export type BrandedLayout = {
   buttonPosition?: number | null;
 };
 
+const DEFAULT_GREETING = "Hi {{first_name|there}}";
+
 /** Validates the branded layout from a request body (null = plain). */
 export function parseBrandedLayout(raw: unknown): BrandedLayout | null {
   const b = raw as Record<string, unknown> | null | undefined;
   if (!b || typeof b.headline !== "string" || !b.headline.trim()) return null;
   return {
+    greeting: typeof b.greeting === "string" ? b.greeting.slice(0, 200) : undefined,
     headline: b.headline,
     highlight: typeof b.highlight === "string" ? b.highlight : undefined,
     buttonLabel: typeof b.buttonLabel === "string" ? b.buttonLabel : undefined,
@@ -64,7 +69,7 @@ export function composeEmail(args: {
   const b = args.branded;
   if (b) {
     const branded = {
-      greeting: renderTemplate("Hi {{first_name|there}}", args.lead, sender),
+      greeting: renderTemplate(b.greeting ?? DEFAULT_GREETING, args.lead, sender).trim(),
       headline: renderTemplate(b.headline, args.lead, sender),
       highlight: b.highlight ? renderTemplate(b.highlight, args.lead, sender) : undefined,
       body: text,
@@ -231,7 +236,7 @@ export async function sendOutreachEmails(args: {
       ? await prisma.emailThread.findFirst({ where: { leadId, ownerEmail: args.senderEmail, bouncedAt: null }, orderBy: { lastSentAt: "desc" } })
       : null;
     const b = args.branded;
-    const brandedText = b ? [b.headline, b.highlight, b.buttonLabel, b.buttonUrl].filter(Boolean).join("\n") : "";
+    const brandedText = b ? [b.greeting ?? DEFAULT_GREETING, b.headline, b.highlight, b.buttonLabel, b.buttonUrl].filter(Boolean).join("\n") : "";
     const missing = missingVariables(`${existing ? "" : args.subject}\n${args.body}\n${brandedText}`, info, sender);
     if (missing.length) {
       skip(`Blank ${missing.map((k) => `{{${k}}}`).join(", ")} — add a fallback or fill it in`);

@@ -1,6 +1,6 @@
 export type TemplateLead = {
   name: string;
-  /** Set on the lead for greeting; when empty, the first word of name is used. */
+  /** Real first name for greetings; when empty, {{first_name}} is empty (use a fallback). */
   firstName?: string | null;
   country: string | null;
   username: string | null;
@@ -26,7 +26,8 @@ type Variable = {
 const firstWord = (s: string) => s.split(/[\s|,-]+/).filter(Boolean)[0] ?? s;
 
 export const TEMPLATE_VARIABLES: Variable[] = [
-  { key: "first_name", label: "First name", group: "Lead", value: (l) => l.firstName?.trim() || firstWord(l.name) },
+  // Only a real first name (set on the lead); channel/brand names don't count — use {{first_name|there}} for those.
+  { key: "first_name", label: "First name", group: "Lead", value: (l) => l.firstName?.trim() ?? "" },
   { key: "icebreaker", label: "AI first line (generate & approve first)", group: "Lead", value: (l) => l.icebreaker ?? "" },
   { key: "name", label: "Full name / channel", group: "Lead", value: (l) => l.name },
   { key: "country", label: "Country", group: "Lead", value: (l) => l.country ?? "" },

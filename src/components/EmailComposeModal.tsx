@@ -58,6 +58,8 @@ export function EmailComposeModal({
   const [testTo, setTestTo] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pendingVar, setPendingVar] = useState<{ key: string; field: "subject" | "body"; start: number; end: number; fallback: string } | null>(null);
+  const [greeting, setGreeting] = useState("Hi {{first_name|there}}");
   const [buttonForm, setButtonForm] = useState<{ label: string; url: string } | null>(null);
   const [colors, setColors] = useState<EmailColors>(DEFAULT_COLORS);
   const previewFrameRef = useRef<HTMLIFrameElement>(null);
@@ -114,7 +116,7 @@ export function EmailComposeModal({
     ? { subject: renderTemplate(subject, toLead(previewRecipient), sender), body: buttonsToPlainText(renderTemplate(body, toLead(previewRecipient), sender)) }
     : null;
 
-  const brandedFields = layout === "branded" ? [headline, highlight].join("\n") : "";
+  const brandedFields = layout === "branded" ? [greeting, headline, highlight].join("\n") : "";
   // Across everyone selected: which variables come out empty (no fallback), and any unknown {{keys}}.
   const missingCounts = new Map<string, number>();
   for (const r of selectedRecipients) {
@@ -124,7 +126,7 @@ export function EmailComposeModal({
   const brandedHtml =
     layout === "branded" && previewRecipient
       ? renderBrandedEmail({
-          greeting: renderTemplate("Hi {{first_name|there}}", toLead(previewRecipient), sender),
+          greeting: renderTemplate(greeting, toLead(previewRecipient), sender),
           headline: renderTemplate(headline, toLead(previewRecipient), sender) || "Your headline",
           highlight: highlight ? renderTemplate(highlight, toLead(previewRecipient), sender) : undefined,
           body: renderTemplate(body, toLead(previewRecipient), sender),
@@ -137,15 +139,30 @@ export function EmailComposeModal({
         ? renderPlainEmail(renderTemplate(body, toLead(previewRecipient), sender), signatureHtml)
         : null;
 
-  function insertVariable(key: string) {
-    const token = `{{${key}}}`;
+  /** Picking a variable opens a small "if empty, use …" step; the cursor position is remembered. */
+  function startInsertVariable(key: string) {
     const el = lastField === "subject" ? subjectRef.current : bodyRef.current;
     const current = lastField === "subject" ? subject : body;
-    const start = el?.selectionStart ?? current.length;
-    const end = el?.selectionEnd ?? current.length;
+    setPendingVar({
+      key,
+      field: lastField,
+      start: el?.selectionStart ?? current.length,
+      end: el?.selectionEnd ?? current.length,
+      fallback: key === "first_name" ? "there" : "",
+    });
+  }
+
+  function insertVariable() {
+    if (!pendingVar) return;
+    const { key, field, start, end } = pendingVar;
+    const fallback = pendingVar.fallback.replace(/[{}|]/g, "").trim();
+    const token = fallback ? `{{${key}|${fallback}}}` : `{{${key}}}`;
+    const el = field === "subject" ? subjectRef.current : bodyRef.current;
+    const current = field === "subject" ? subject : body;
     const next = current.slice(0, start) + token + current.slice(end);
-    if (lastField === "subject") setSubject(next);
+    if (field === "subject") setSubject(next);
     else setBody(next);
+    setPendingVar(null);
     requestAnimationFrame(() => {
       el?.focus();
       el?.setSelectionRange(start + token.length, start + token.length);
@@ -223,7 +240,7 @@ export function EmailComposeModal({
           subject,
           body,
           icebreakers,
-          branded: layout === "branded" ? { headline, highlight, colors } : null,
+          branded: layout === "branded" ? { greeting, headline, highlight, colors } : null,
           useSignature: useSignature && !!signatureHtml,
         }),
       });
@@ -251,7 +268,7 @@ export function EmailComposeModal({
           replyInThread,
           templateStepId,
           icebreakers,
-          branded: layout === "branded" ? { headline, highlight, colors } : null,
+          branded: layout === "branded" ? { greeting, headline, highlight, colors } : null,
           useSignature: useSignature && !!signatureHtml,
         }),
       });
@@ -363,7 +380,7 @@ export function EmailComposeModal({
                   <select
                     value=""
                     onChange={(e) => {
-                      if (e.target.value) insertVariable(e.target.value);
+                      if (e.target.value) startInsertVariable(e.target.value);
                     }}
                     title={`Inserts at the cursor in the ${lastField}`}
                     className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 outline-none"
@@ -391,6 +408,38 @@ export function EmailComposeModal({
                     Fallback if empty: {"{{first_name|there}}"}
                   </span>
                 </div>
+                {pendingVar && (() => {
+                  const variable = TEMPLATE_VARIABLES.find((v) => v.key === pendingVar.key);
+                  const emptyFor = variable ? selectedRecipients.filter((r) => !variable.value(toLead(r), sender).trim()).length : 0;
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/[0.04] p-2.5 text-sm">
+                      <span className="text-zinc-300">
+                        Insert <code className="rounded bg-white/10 px-1 text-xs">{`{{${pendingVar.key}}}`}</code> into the {pendingVar.field}. If it&apos;s empty, use:
+                      </span>
+                      <input
+                        autoFocus
+                        value={pendingVar.fallback}
+                        onChange={(e) => setPendingVar({ ...pendingVar, fallback: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") insertVariable();
+                          if (e.key === "Escape") setPendingVar(null);
+                        }}
+                        placeholder={pendingVar.key === "first_name" ? "e.g. there" : "e.g. your channel"}
+                        className="w-44 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                      />
+                      <button type="button" onClick={insertVariable} className="rounded-md bg-blue-700 px-3 py-1 text-sm text-zinc-100 hover:bg-blue-600">
+                        Insert
+                      </button>
+                      <button type="button" onClick={() => setPendingVar(null)} className="text-xs text-zinc-500 hover:text-zinc-300">
+                        Cancel
+                      </button>
+                      <p className="w-full text-[11px] text-zinc-500">
+                        {selectedRecipients.length > 0 && (emptyFor > 0 ? `Empty for ${emptyFor} of ${selectedRecipients.length} selected — they get the fallback. ` : `Filled for all ${selectedRecipients.length} selected. `)}
+                        Leave it blank for no fallback (anyone missing it is then skipped).
+                      </p>
+                    </div>
+                  );
+                })()}
                 {buttonForm && (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/[0.04] p-2.5">
                     <input
@@ -438,6 +487,15 @@ export function EmailComposeModal({
                 </div>
                 {layout === "branded" && (
                   <div className="grid grid-cols-1 gap-2 rounded-lg border border-white/10 bg-white/[0.02] p-3 md:grid-cols-2">
+                    <label className="flex items-center gap-2 text-xs text-zinc-500 md:col-span-2">
+                      Greeting (orange, small caps)
+                      <input
+                        value={greeting}
+                        onChange={(e) => setGreeting(e.target.value)}
+                        placeholder="Leave empty for no greeting"
+                        className="flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                      />
+                    </label>
                     <input
                       value={headline}
                       onChange={(e) => setHeadline(e.target.value)}
@@ -489,7 +547,7 @@ export function EmailComposeModal({
                       ))}
                     </div>
                     <p className="text-[11px] text-zinc-600 md:col-span-2">
-                      The greeting &ldquo;HI {"{{FIRST_NAME}}"}&rdquo;, logo, divider and footer are added automatically. In the message: blank line = new paragraph,
+                      The logo, divider and footer are added automatically; {"{{first_name|there}}"} means &ldquo;there&rdquo; for anyone without a first name. In the message: blank line = new paragraph,
                       &ldquo;- &rdquo; = bullet, &ldquo;1. Title&rdquo; = numbered step (text below it on the next lines), **bold**, links work as-is. Buttons: &ldquo;+ Insert button&rdquo;, then drag them in the preview.
                     </p>
                   </div>

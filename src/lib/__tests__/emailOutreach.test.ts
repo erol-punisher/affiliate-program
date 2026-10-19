@@ -4,7 +4,7 @@ import { movesOnReply, nextOutreachStage } from "../crmMoves";
 import { decryptSecret, encryptSecret } from "../secretBox";
 
 describe("renderTemplate", () => {
-  const lead = { name: "Ivan Kapustić", country: "Croatia", username: null, pipelineName: "EuroAffiliates ReachOut", followerCount: 2470 };
+  const lead = { name: "Ivan Kapustić", firstName: "Ivan", country: "Croatia", username: null, pipelineName: "EuroAffiliates ReachOut", followerCount: 2470 };
   const me = { name: "Erol Simon", email: "erol@shopcircle.co" };
 
   it("fills known variables and keeps unknown ones", () => {
@@ -20,11 +20,13 @@ describe("renderTemplate", () => {
 
   it("prefers the lead's first-name field when it's set", () => {
     expect(renderTemplate("Hi {{first_name}}", { ...lead, name: "Strategia eCommerce", firstName: "Luca" }, me)).toBe("Hi Luca");
-    expect(renderTemplate("Hi {{first_name}}", { ...lead, name: "Strategia eCommerce", firstName: "  " }, me)).toBe("Hi Strategia");
+    expect(renderTemplate("Hi {{first_name|there}}", { ...lead, name: "Strategia eCommerce", firstName: "  " }, me)).toBe("Hi there");
   });
 
-  it("takes the first word of channel-style names", () => {
-    expect(renderTemplate("{{first_name}}", { ...lead, name: "Marcos Balmain | Shopify, IA y Ecommerce" }, me)).toBe("Marcos");
+  it("never guesses a first name from a channel name", () => {
+    const channel = { ...lead, name: "Money Maker Club", firstName: null };
+    expect(renderTemplate("Hi {{first_name|there}},", channel, me)).toBe("Hi there,");
+    expect(missingVariables("Hi {{first_name}},", channel, me)).toEqual(["first_name"]);
   });
 
   it("reports empty variables without a fallback, and unknown keys", () => {

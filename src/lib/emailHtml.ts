@@ -193,7 +193,7 @@ export function renderBrandedEmail(e: BrandedEmail, opts: RenderOptions = {}): s
 </tr></table>
 </td></tr>
 
-<tr><td style="padding:0 0 14px 0;font-family:${FONT};font-size:13px;font-weight:bold;letter-spacing:4px;text-transform:uppercase;color:${colors.accent};">${escapeHtml(e.greeting)}</td></tr>
+${e.greeting.trim() ? `<tr><td style="padding:0 0 14px 0;font-family:${FONT};font-size:13px;font-weight:bold;letter-spacing:4px;text-transform:uppercase;color:${colors.accent};">${escapeHtml(e.greeting)}</td></tr>` : ""}
 
 <tr><td style="padding:0 0 22px 0;font-family:${FONT};font-size:30px;font-weight:bold;line-height:1.3;color:${INK};">${escapeHtml(e.headline)}${
     e.highlight ? `<br><span style="color:${colors.accent};">${escapeHtml(e.highlight)}</span>` : ""
@@ -222,9 +222,9 @@ export function brandedToPlainText(e: BrandedEmail): string {
     const pos = e.buttonPosition == null || e.buttonPosition < 0 || e.buttonPosition > blocks.length ? blocks.length : Math.floor(e.buttonPosition);
     blocks.splice(pos, 0, buttonSnippet(e.buttonLabel, e.buttonUrl));
   }
-  const parts = [`${e.greeting},`, [e.headline, e.highlight].filter(Boolean).join(" "), ...blocks.map(buttonsToPlainText)];
+  const parts = [e.greeting.trim() ? `${e.greeting.trim()},` : "", [e.headline, e.highlight].filter(Boolean).join(" "), ...blocks.map(buttonsToPlainText)];
   parts.push(`${e.senderName}\nReleasit · ${e.senderEmail}`, `Not the right fit? Just reply "no thanks" and we won't email you again.`);
-  return parts.join("\n\n");
+  return parts.filter(Boolean).join("\n\n");
 }
 
 /**

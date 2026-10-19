@@ -111,3 +111,11 @@ describe("inline [button: …](…) blocks", () => {
     expect(brandedToPlainText({ ...base, body })).toContain("Book a call: https://cal.com/x");
   });
 });
+
+describe("greeting", () => {
+  it("is left out when empty", () => {
+    const html = renderBrandedEmail({ ...base, greeting: "" });
+    expect(html).not.toContain("letter-spacing:4px");
+    expect(brandedToPlainText({ ...base, greeting: "" }).startsWith("Most COD")).toBe(true);
+  });
+});
