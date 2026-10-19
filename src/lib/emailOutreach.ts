@@ -32,7 +32,19 @@ export async function sendOutreachEmails(args: {
   for (const [i, leadId] of rootIds.entries()) {
     const lead = await prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, name: true, email: true, country: true, username: true, dateOfReachOut: true, stage: { select: { name: true, pipeline: { select: { name: true } } } } },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        country: true,
+        username: true,
+        followerCount: true,
+        websiteUrl: true,
+        socialsUrl: true,
+        referralLink: true,
+        dateOfReachOut: true,
+        stage: { select: { name: true, pipeline: { select: { name: true } } } },
+      },
     });
     if (!lead) continue;
     const to = lead.email?.trim();
@@ -43,17 +55,18 @@ export async function sendOutreachEmails(args: {
     if (i > 0) await new Promise((r) => setTimeout(r, GAP_BETWEEN_SENDS_MS));
 
     try {
-      const info = { name: lead.name, country: lead.country, username: lead.username, pipelineName: lead.stage.pipeline.name };
+      const info = { ...lead, pipelineName: lead.stage.pipeline.name, stageName: lead.stage.name };
+      const sender = { name: args.senderName, email: args.senderEmail };
       const existing = args.replyInThread
         ? await prisma.emailThread.findFirst({ where: { leadId, ownerEmail: args.senderEmail }, orderBy: { lastSentAt: "desc" } })
         : null;
-      const subject = existing ? (existing.subject.startsWith("Re:") ? existing.subject : `Re: ${existing.subject}`) : renderTemplate(args.subject, info, args.senderName);
+      const subject = existing ? (existing.subject.startsWith("Re:") ? existing.subject : `Re: ${existing.subject}`) : renderTemplate(args.subject, info, sender);
       const sent = await sendGmail(token, {
         from: args.senderEmail,
         fromName: args.senderName,
         to,
         subject,
-        body: renderTemplate(args.body, info, args.senderName),
+        body: renderTemplate(args.body, info, sender),
         threadId: existing?.gmailThreadId,
         inReplyTo: existing?.lastMessageId,
       });

@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { renderTemplate } from "../emailTemplate";
+import { missingVariables, renderTemplate, unknownVariables } from "../emailTemplate";
 import { movesOnReply, nextOutreachStage } from "../crmMoves";
 import { decryptSecret, encryptSecret } from "../secretBox";
 
 describe("renderTemplate", () => {
-  const lead = { name: "Ivan Kapustić", country: "Croatia", username: null, pipelineName: "EuroAffiliates ReachOut" };
+  const lead = { name: "Ivan Kapustić", country: "Croatia", username: null, pipelineName: "EuroAffiliates ReachOut", followerCount: 2470 };
+  const me = { name: "Erol Simon", email: "erol@shopcircle.co" };
 
-  it("fills known placeholders and keeps unknown ones", () => {
-    expect(renderTemplate("Hi {{first_name}} from {{ country }} — {{my_name}} ({{discount}})", lead, "Erol")).toBe(
-      "Hi Ivan from Croatia — Erol ({{discount}})",
+  it("fills known variables and keeps unknown ones", () => {
+    expect(renderTemplate("Hi {{first_name}} from {{ country }}, {{followers}} subs — {{my_first_name}} ({{discount}})", lead, me)).toBe(
+      "Hi Ivan from Croatia, 2,470 subs — Erol ({{discount}})",
     );
   });
 
+  it("uses the fallback only when the value is empty", () => {
+    expect(renderTemplate("{{username|friend}} / {{first_name|there}}", lead, me)).toBe("friend / Ivan");
+    expect(renderTemplate("{{website}}", lead, me)).toBe("");
+  });
+
   it("takes the first word of channel-style names", () => {
-    expect(renderTemplate("{{first_name}}", { ...lead, name: "Marcos Balmain | Shopify, IA y Ecommerce" }, "")).toBe("Marcos");
+    expect(renderTemplate("{{first_name}}", { ...lead, name: "Marcos Balmain | Shopify, IA y Ecommerce" }, me)).toBe("Marcos");
+  });
+
+  it("reports empty variables without a fallback, and unknown keys", () => {
+    expect(missingVariables("{{website}} {{username|x}} {{country}}", lead, me)).toEqual(["website"]);
+    expect(unknownVariables("{{first_name}} {{firstName}} {{discount|10%}}")).toEqual(["firstName", "discount"]);
   });
 });
 

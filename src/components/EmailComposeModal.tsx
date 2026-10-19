@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { TEMPLATE_PLACEHOLDERS, renderTemplate } from "@/lib/emailTemplate";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TEMPLATE_VARIABLES, missingVariables, renderTemplate, unknownVariables, type TemplateLead } from "@/lib/emailTemplate";
 
 export type EmailRecipient = {
   id: string;
@@ -9,6 +9,11 @@ export type EmailRecipient = {
   email: string | null;
   country: string | null;
   username: string | null;
+  followerCount?: number | null;
+  websiteUrl?: string | null;
+  socialsUrl?: string | null;
+  referralLink?: string | null;
+  stageName?: string | null;
 };
 
 type Cadence = { id: string; name: string; steps: { id: string; label: string; content: string }[] };
@@ -28,7 +33,7 @@ export function EmailComposeModal({
   onClose: () => void;
   onSent: () => void;
 }) {
-  const [gmail, setGmail] = useState<{ connected: boolean; name: string } | null>(null);
+  const [gmail, setGmail] = useState<{ connected: boolean; name: string; email: string } | null>(null);
   const [cadences, setCadences] = useState<Cadence[]>([]);
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(recipients.filter(hasEmail).slice(0, MAX_PER_SEND).map((r) => r.id)),
@@ -43,8 +48,8 @@ export function EmailComposeModal({
   useEffect(() => {
     void fetch("/api/gmail/status")
       .then((r) => r.json())
-      .then((d) => setGmail({ connected: !!d.connected, name: d.name ?? "" }))
-      .catch(() => setGmail({ connected: false, name: "" }));
+      .then((d) => setGmail({ connected: !!d.connected, name: d.name ?? "", email: d.email ?? "" }))
+      .catch(() => setGmail({ connected: false, name: "", email: "" }));
     void fetch("/api/templates/cadences")
       .then((r) => r.json())
       .then((d) => setCadences(d.cadences ?? []))
@@ -53,14 +58,40 @@ export function EmailComposeModal({
 
   const withEmail = recipients.filter(hasEmail);
   const withoutEmail = recipients.length - withEmail.length;
-  const firstSelected = recipients.find((r) => selected.has(r.id));
-  const senderName = gmail?.name ?? "";
-  const preview = useMemo(() => {
-    if (!firstSelected) return null;
-    const lead = { name: firstSelected.name, country: firstSelected.country, username: firstSelected.username, pipelineName };
-    return { subject: renderTemplate(subject, lead, senderName), body: renderTemplate(body, lead, senderName) };
-  }, [firstSelected, subject, body, pipelineName, senderName]);
-  const unknownPlaceholder = preview && /\{\{[^}]*\}\}/.test(preview.subject + preview.body);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const [lastField, setLastField] = useState<"subject" | "body">("body");
+
+  const sender = useMemo(() => ({ name: gmail?.name ?? "", email: gmail?.email ?? "" }), [gmail]);
+  const toLead = (r: EmailRecipient): TemplateLead => ({ ...r, pipelineName });
+  const selectedRecipients = recipients.filter((r) => selected.has(r.id));
+  const previewRecipient = selectedRecipients.find((r) => r.id === previewId) ?? selectedRecipients[0];
+  const preview = previewRecipient
+    ? { subject: renderTemplate(subject, toLead(previewRecipient), sender), body: renderTemplate(body, toLead(previewRecipient), sender) }
+    : null;
+
+  // Across everyone selected: which variables come out empty (no fallback), and any unknown {{keys}}.
+  const missingCounts = new Map<string, number>();
+  for (const r of selectedRecipients) {
+    for (const key of missingVariables(`${subject}\n${body}`, toLead(r), sender)) missingCounts.set(key, (missingCounts.get(key) ?? 0) + 1);
+  }
+  const unknown = unknownVariables(`${subject}\n${body}`);
+
+  function insertVariable(key: string) {
+    const token = `{{${key}}}`;
+    const el = lastField === "subject" ? subjectRef.current : bodyRef.current;
+    const current = lastField === "subject" ? subject : body;
+    const start = el?.selectionStart ?? current.length;
+    const end = el?.selectionEnd ?? current.length;
+    const next = current.slice(0, start) + token + current.slice(end);
+    if (lastField === "subject") setSubject(next);
+    else setBody(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -82,7 +113,7 @@ export function EmailComposeModal({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data.needsGmail) setGmail({ connected: false, name: senderName });
+        if (data.needsGmail) setGmail((prev) => ({ connected: false, name: prev?.name ?? "", email: prev?.email ?? "" }));
         throw new Error(data.error ?? `Failed (${res.status})`);
       }
       setResults(data.results ?? []);
@@ -182,18 +213,41 @@ export function EmailComposeModal({
                       </optgroup>
                     ))}
                   </select>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) insertVariable(e.target.value);
+                    }}
+                    title={`Inserts at the cursor in the ${lastField}`}
+                    className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-zinc-300 outline-none"
+                  >
+                    <option value="" className="bg-[#10141f]">Insert variable into {lastField}…</option>
+                    {(["Lead", "You"] as const).map((group) => (
+                      <optgroup key={group} label={group === "Lead" ? "Lead" : "You (sender)"} className="bg-[#10141f]">
+                        {TEMPLATE_VARIABLES.filter((v) => v.group === group).map((v) => (
+                          <option key={v.key} value={v.key} className="bg-[#10141f]">
+                            {v.label} — {`{{${v.key}}}`}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                   <span className="text-[11px] text-zinc-600">
-                    Fields: {TEMPLATE_PLACEHOLDERS.map((p) => `{{${p}}}`).join(" ")}
+                    Fallback if empty: {"{{first_name|there}}"}
                   </span>
                 </div>
                 <input
+                  ref={subjectRef}
                   value={subject}
+                  onFocus={() => setLastField("subject")}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="Subject (follow-ups reuse the earlier thread's subject)"
                   className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
                 />
                 <textarea
+                  ref={bodyRef}
                   value={body}
+                  onFocus={() => setLastField("body")}
                   onChange={(e) => setBody(e.target.value)}
                   rows={8}
                   placeholder={"Hi {{first_name}},\n\n…"}
@@ -205,14 +259,36 @@ export function EmailComposeModal({
                 </label>
               </section>
 
-              {preview && (
+              {preview && previewRecipient && (
                 <section>
-                  <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Preview for {firstSelected?.name}</h3>
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Preview for</h3>
+                    <select
+                      value={previewRecipient.id}
+                      onChange={(e) => setPreviewId(e.target.value)}
+                      className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-zinc-300 outline-none"
+                    >
+                      {selectedRecipients.map((r) => (
+                        <option key={r.id} value={r.id} className="bg-[#10141f]">
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-zinc-300">
                     <p className="mb-2 font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
                     {preview.body}
                   </div>
-                  {unknownPlaceholder && <p className="mt-1 text-xs text-amber-400">Some {"{{fields}}"} aren&apos;t recognised and will be sent as written.</p>}
+                  {unknown.length > 0 && (
+                    <p className="mt-1 text-xs text-amber-400">
+                      Not a known variable, will be sent as written: {unknown.map((k) => `{{${k}}}`).join(", ")}
+                    </p>
+                  )}
+                  {Array.from(missingCounts).map(([key, count]) => (
+                    <p key={key} className="mt-1 text-xs text-amber-400">
+                      {`{{${key}}}`} is empty for {count} of {selectedRecipients.length} — it will be left blank. Add a fallback like {`{{${key}|…}}`} or untick them.
+                    </p>
+                  ))}
                 </section>
               )}
               <p className="text-xs text-zinc-500">

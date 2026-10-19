@@ -965,7 +965,7 @@ export function CrmBoard({ userEmail }: Props) {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setComposeFor(stage.leads);
+                              setComposeFor(stage.leads.map((l) => ({ ...l, stageName: stage.name })));
                             }}
                             title="Email leads in this stage"
                             className="text-zinc-500 transition-colors hover:text-zinc-200"
@@ -1037,7 +1037,7 @@ export function CrmBoard({ userEmail }: Props) {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setComposeFor([lead]);
+                                    setComposeFor([{ ...lead, stageName: stage.name }]);
                                   }}
                                   title="Email"
                                   className="text-zinc-500 transition-colors hover:text-zinc-200"
