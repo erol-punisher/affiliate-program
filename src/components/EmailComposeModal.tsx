@@ -167,7 +167,7 @@ export function EmailComposeModal({
         if (e.target === e.currentTarget && !sending) onClose();
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-white/10 bg-[#10141f] shadow-2xl">
+      <div className="flex h-[95vh] w-[95vw] max-w-[1400px] flex-col overflow-hidden rounded-xl border border-white/10 bg-[#10141f] shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
           <h2 className="text-sm font-semibold text-zinc-100">Email {recipients.length === 1 ? recipients[0].name : `${recipients.length} leads`}</h2>
           <button type="button" onClick={onClose} disabled={sending} className="text-sm text-zinc-500 hover:text-zinc-300">
@@ -209,7 +209,7 @@ export function EmailComposeModal({
                   Recipients · {selected.size} selected
                   {withoutEmail > 0 && <span className="ml-1 normal-case text-zinc-600">({withoutEmail} without an email address)</span>}
                 </h3>
-                <div className="max-h-36 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2">
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] p-2">
                   {recipients.map((r) => (
                     <label key={r.id} className={`flex items-center gap-2 px-1 py-0.5 text-xs ${hasEmail(r) ? "text-zinc-300" : "text-zinc-600"}`}>
                       <input type="checkbox" disabled={!hasEmail(r)} checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
@@ -223,7 +223,9 @@ export function EmailComposeModal({
                 )}
               </section>
 
-              <section className="flex flex-col gap-2">
+              {/* Editor on the left, live preview on the right (stacked on narrow screens) */}
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <section className="flex min-w-0 flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     defaultValue=""
@@ -284,9 +286,9 @@ export function EmailComposeModal({
                   value={body}
                   onFocus={() => setLastField("body")}
                   onChange={(e) => setBody(e.target.value)}
-                  rows={8}
-                  placeholder={"Hi {{first_name}},\n\n…"}
-                  className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                  rows={20}
+                  placeholder={"Hi {{first_name|there}},\n\n…"}
+                  className="min-h-[24rem] flex-1 resize-y rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
                 />
                 <label className="flex items-center gap-2 text-xs text-zinc-400">
                   <input type="checkbox" checked={replyInThread} onChange={(e) => setReplyInThread(e.target.checked)} />
@@ -294,8 +296,8 @@ export function EmailComposeModal({
                 </label>
               </section>
 
-              {preview && previewRecipient && (
-                <section>
+              {preview && previewRecipient ? (
+                <section className="flex min-w-0 flex-col">
                   <div className="mb-1.5 flex items-center gap-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Preview for</h3>
                     <select
@@ -310,7 +312,7 @@ export function EmailComposeModal({
                       ))}
                     </select>
                   </div>
-                  <div className="whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-zinc-300">
+                  <div className="min-h-[24rem] flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm leading-relaxed text-zinc-300">
                     <p className="mb-2 font-medium text-zinc-100">{preview.subject || "(no subject)"}</p>
                     {preview.body}
                   </div>
@@ -325,7 +327,12 @@ export function EmailComposeModal({
                     </p>
                   ))}
                 </section>
+              ) : (
+                <section className="flex min-h-[24rem] items-center justify-center rounded-lg border border-dashed border-white/10 text-sm text-zinc-600">
+                  Tick at least one recipient to see a preview
+                </section>
               )}
+              </div>
               <section className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <button
