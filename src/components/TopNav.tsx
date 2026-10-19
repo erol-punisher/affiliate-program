@@ -10,6 +10,7 @@ const TABS = [
   { href: "/", label: "Affiliates" },
   { href: "/payments", label: "Payment Records" },
   { href: "/crm", label: "CRM" },
+  { href: "/emails", label: "Emails" },
   { href: "/onboarding", label: "Onboarding" },
   { href: "/applications", label: "Applications" },
   { href: "/contracts", label: "Contracts" },
