@@ -161,13 +161,13 @@ export function EmailComposeModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex bg-black/60"
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget && !sending) onClose();
       }}
     >
-      <div className="flex h-[95vh] w-[95vw] max-w-[1400px] flex-col overflow-hidden rounded-xl border border-white/10 bg-[#10141f] shadow-2xl">
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#10141f]">
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
           <h2 className="text-sm font-semibold text-zinc-100">Email {recipients.length === 1 ? recipients[0].name : `${recipients.length} leads`}</h2>
           <button type="button" onClick={onClose} disabled={sending} className="text-sm text-zinc-500 hover:text-zinc-300">
