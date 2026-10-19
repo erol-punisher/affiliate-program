@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodyToHtml, brandedToPlainText, renderBrandedEmail, sanitizeColors } from "../emailHtml";
+import { bodyToHtml, brandedToPlainText, buttonsToPlainText, moveBlock, renderBrandedEmail, sanitizeColors } from "../emailHtml";
 
 const base = {
   greeting: "Hi Erol",
@@ -77,6 +77,37 @@ describe("colours, button position and logo", () => {
     expect(renderBrandedEmail(withButton)).not.toContain("<script");
     const editable = renderBrandedEmail(withButton, { editable: true });
     expect(editable).toContain('draggable="true"');
-    expect(editable.match(/data-pos=/g)?.length).toBe(2);
+    expect(editable.match(/data-pos=/g)?.length).toBe(4);
+  });
+});
+
+describe("inline [button: …](…) blocks", () => {
+  const body = "Intro\n\n[button: Book a call](https://cal.com/x)\n\nOutro";
+
+  it("renders a button where it sits in the message", () => {
+    const html = renderBrandedEmail({ ...base, body, colors: { accent: "#111111", secondary: "#222222", button: "#333333" } });
+    const [intro, btn, outro] = [html.indexOf(">Intro<"), html.indexOf("Book a call</a>"), html.indexOf(">Outro<")];
+    expect(intro).toBeLessThan(btn);
+    expect(btn).toBeLessThan(outro);
+    expect(html).toContain('href="https://cal.com/x"');
+    expect(html).toContain("background:#333333");
+  });
+
+  it("leaves non-http links as text", () => {
+    expect(bodyToHtml("[button: Bad](javascript:alert(1))")).not.toContain("<a href");
+  });
+
+  it("makes only buttons draggable in the editable preview", () => {
+    const html = renderBrandedEmail({ ...base, body }, { editable: true });
+    expect(html.match(/draggable="true"/g)?.length).toBe(1);
+    expect(html).toContain('data-block="1"');
+  });
+
+  it("moves blocks and turns buttons into text for plain emails", () => {
+    expect(moveBlock(body, 1, 0)).toBe("[button: Book a call](https://cal.com/x)\n\nIntro\n\nOutro");
+    expect(moveBlock(body, 1, 3)).toBe("Intro\n\nOutro\n\n[button: Book a call](https://cal.com/x)");
+    expect(moveBlock(body, 1, 2)).toBe(body);
+    expect(buttonsToPlainText(body)).toBe("Intro\n\nBook a call: https://cal.com/x\n\nOutro");
+    expect(brandedToPlainText({ ...base, body })).toContain("Book a call: https://cal.com/x");
   });
 });

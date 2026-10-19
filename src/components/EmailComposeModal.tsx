@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TEMPLATE_VARIABLES, missingVariables, renderTemplate, unknownVariables, type TemplateLead } from "@/lib/emailTemplate";
-import { COLOR_PRESETS, DEFAULT_COLORS, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
+import { COLOR_PRESETS, DEFAULT_COLORS, buttonSnippet, buttonsToPlainText, moveBlock, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
 
 export type EmailRecipient = {
   id: string;
@@ -51,10 +51,8 @@ export function EmailComposeModal({
   const [layout, setLayout] = useState<"plain" | "branded">("plain");
   const [headline, setHeadline] = useState("");
   const [highlight, setHighlight] = useState("");
-  const [buttonLabel, setButtonLabel] = useState("");
-  const [buttonUrl, setButtonUrl] = useState("");
+  const [buttonForm, setButtonForm] = useState<{ label: string; url: string } | null>(null);
   const [colors, setColors] = useState<EmailColors>(DEFAULT_COLORS);
-  const [buttonPosition, setButtonPosition] = useState<number | null>(null);
   const previewFrameRef = useRef<HTMLIFrameElement>(null);
   const [icebreakers, setIcebreakers] = useState<Record<string, string>>({});
   const [suggesting, setSuggesting] = useState(false);
@@ -79,7 +77,9 @@ export function EmailComposeModal({
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       if (e.source !== previewFrameRef.current?.contentWindow) return;
-      if (e.data?.type === "releasit-button-pos" && Number.isInteger(e.data.position)) setButtonPosition(e.data.position);
+      if (e.data?.type === "releasit-move-block" && Number.isInteger(e.data.from) && Number.isInteger(e.data.to)) {
+        setBody((b) => moveBlock(b, e.data.from, e.data.to));
+      }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -97,10 +97,10 @@ export function EmailComposeModal({
   const selectedRecipients = recipients.filter((r) => selected.has(r.id));
   const previewRecipient = selectedRecipients.find((r) => r.id === previewId) ?? selectedRecipients[0];
   const preview = previewRecipient
-    ? { subject: renderTemplate(subject, toLead(previewRecipient), sender), body: renderTemplate(body, toLead(previewRecipient), sender) }
+    ? { subject: renderTemplate(subject, toLead(previewRecipient), sender), body: buttonsToPlainText(renderTemplate(body, toLead(previewRecipient), sender)) }
     : null;
 
-  const brandedFields = layout === "branded" ? [headline, highlight, buttonLabel, buttonUrl].join("\n") : "";
+  const brandedFields = layout === "branded" ? [headline, highlight].join("\n") : "";
   // Across everyone selected: which variables come out empty (no fallback), and any unknown {{keys}}.
   const missingCounts = new Map<string, number>();
   for (const r of selectedRecipients) {
@@ -114,12 +114,9 @@ export function EmailComposeModal({
           headline: renderTemplate(headline, toLead(previewRecipient), sender) || "Your headline",
           highlight: highlight ? renderTemplate(highlight, toLead(previewRecipient), sender) : undefined,
           body: renderTemplate(body, toLead(previewRecipient), sender),
-          buttonLabel: buttonLabel ? renderTemplate(buttonLabel, toLead(previewRecipient), sender) : undefined,
-          buttonUrl: buttonUrl ? renderTemplate(buttonUrl, toLead(previewRecipient), sender) : undefined,
           senderName: sender.name,
           senderEmail: sender.email,
           colors,
-          buttonPosition,
         }, { editable: true })
       : null;
 
@@ -138,11 +135,31 @@ export function EmailComposeModal({
     });
   }
 
+  const buttonFormValid = !!buttonForm && !!buttonForm.label.trim() && /^(https?:\/\/\S+|\{\{\s*[a-z_]+\s*(\|[^}]*)?\}\})$/i.test(buttonForm.url.trim());
+
+  /** Puts a [button: …](…) block at the cursor in the message, as its own paragraph. */
+  function insertButton() {
+    if (!buttonForm || !buttonFormValid) return;
+    const snippet = buttonSnippet(buttonForm.label.replace(/[[\]]/g, ""), buttonForm.url);
+    const el = bodyRef.current;
+    const at = el?.selectionStart ?? body.length;
+    const before = body.slice(0, at).replace(/\s*$/, "");
+    const after = body.slice(at).replace(/^\s*/, "");
+    const next = [before, snippet, after].filter(Boolean).join("\n\n");
+    setBody(next);
+    setButtonForm(null);
+    const caret = (before ? before.length + 2 : 0) + snippet.length;
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  }
+
   const usesIcebreaker = /\{\{\s*icebreaker/i.test(`${subject}\n${body}`);
   const blocked =
     unknown.length > 0 ||
     missingCounts.size > 0 ||
-    (layout === "branded" && (!headline.trim() || (!!buttonLabel.trim() !== !!buttonUrl.trim()) || (!!buttonUrl.trim() && !/^https?:\/\//.test(buttonUrl.trim()))));
+    (layout === "branded" && !headline.trim());
   const remainingToday = usage ? Math.max(0, usage.dailyCap - usage.sentToday) : null;
 
   async function suggestFirstLines() {
@@ -188,7 +205,7 @@ export function EmailComposeModal({
           replyInThread,
           templateStepId,
           icebreakers,
-          branded: layout === "branded" ? { headline, highlight, buttonLabel, buttonUrl, colors, buttonPosition } : null,
+          branded: layout === "branded" ? { headline, highlight, colors } : null,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -315,10 +332,50 @@ export function EmailComposeModal({
                       </optgroup>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => setButtonForm(buttonForm ? null : { label: "", url: "" })}
+                    title="Add a call-to-action button to the message"
+                    className={`rounded-md border px-2 py-1 text-xs ${buttonForm ? "border-blue-500/60 bg-blue-500/15 text-zinc-100" : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"}`}
+                  >
+                    + Insert button
+                  </button>
                   <span className="text-[11px] text-zinc-600">
                     Fallback if empty: {"{{first_name|there}}"}
                   </span>
                 </div>
+                {buttonForm && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/[0.04] p-2.5">
+                    <input
+                      autoFocus
+                      value={buttonForm.label}
+                      onChange={(e) => setButtonForm({ ...buttonForm, label: e.target.value })}
+                      placeholder="Button text, e.g. Book a 15-min call"
+                      className="min-w-[14rem] flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                    />
+                    <input
+                      value={buttonForm.url}
+                      onChange={(e) => setButtonForm({ ...buttonForm, url: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && buttonFormValid) insertButton();
+                      }}
+                      placeholder="Link — https://… or {{referral_link}}"
+                      className="min-w-[14rem] flex-1 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                    />
+                    <button
+                      type="button"
+                      disabled={!buttonFormValid}
+                      onClick={insertButton}
+                      className="rounded-md bg-blue-700 px-3 py-1.5 text-sm text-zinc-100 hover:bg-blue-600 disabled:opacity-40"
+                    >
+                      Insert
+                    </button>
+                    <p className="w-full text-[11px] text-zinc-500">
+                      Goes in where your cursor is in the message. Then drag it in the preview to move it.
+                      {layout === "plain" && " In Plain layout it shows as “Text: link”; switch to Branded to see a real button."}
+                    </p>
+                  </div>
+                )}
                 <div className="flex items-center gap-1 text-xs">
                   <span className="mr-1 text-zinc-500">Layout:</span>
                   {(["plain", "branded"] as const).map((l) => (
@@ -345,18 +402,6 @@ export function EmailComposeModal({
                       onChange={(e) => setHighlight(e.target.value)}
                       placeholder="Highlight line under it (orange) — optional"
                       className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50 md:col-span-2"
-                    />
-                    <input
-                      value={buttonLabel}
-                      onChange={(e) => setButtonLabel(e.target.value)}
-                      placeholder="Button text — optional, e.g. Book a 15-min call"
-                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
-                    />
-                    <input
-                      value={buttonUrl}
-                      onChange={(e) => setButtonUrl(e.target.value)}
-                      placeholder="Button link — https://…"
-                      className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
                     />
                     <div className="flex flex-wrap items-center gap-2 text-xs md:col-span-2">
                       <span className="text-zinc-500">Colours:</span>
@@ -397,16 +442,8 @@ export function EmailComposeModal({
                       ))}
                     </div>
                     <p className="text-[11px] text-zinc-600 md:col-span-2">
-                      Drag the button in the preview to move it.{" "}
-                      {buttonPosition !== null && (
-                        <button type="button" onClick={() => setButtonPosition(null)} className="text-blue-400 hover:underline">
-                          Reset to bottom
-                        </button>
-                      )}
-                    </p>
-                    <p className="text-[11px] text-zinc-600 md:col-span-2">
                       The greeting &ldquo;HI {"{{FIRST_NAME}}"}&rdquo;, logo, divider and footer are added automatically. In the message: blank line = new paragraph,
-                      &ldquo;- &rdquo; = bullet, &ldquo;1. Title&rdquo; = numbered step (text below it on the next lines), **bold**, links work as-is.
+                      &ldquo;- &rdquo; = bullet, &ldquo;1. Title&rdquo; = numbered step (text below it on the next lines), **bold**, links work as-is. Buttons: &ldquo;+ Insert button&rdquo;, then drag them in the preview.
                     </p>
                   </div>
                 )}

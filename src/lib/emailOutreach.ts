@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
 import { movesOnReply, moveLeadWithCopies, nextOutreachStage, revertReplyMove } from "@/lib/crmMoves";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
-import { LOGO_CID, brandedToPlainText, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
+import { LOGO_CID, brandedToPlainText, buttonsToPlainText, renderBrandedEmail, type EmailColors } from "@/lib/emailHtml";
 import { RELEASIT_LOGO_PNG_BASE64 } from "@/lib/emailLogo";
 import {
   TEAMMATE_WINDOW_DAYS,
@@ -154,7 +154,7 @@ export async function sendOutreachEmails(args: {
         fromName: args.senderName,
         to,
         subject,
-        body: branded ? brandedToPlainText(branded) : text,
+        body: branded ? brandedToPlainText(branded) : buttonsToPlainText(text),
         html: branded ? renderBrandedEmail(branded, { logoSrc: `cid:${LOGO_CID}` }) : undefined,
         inlineImages: branded ? [{ cid: LOGO_CID, contentType: "image/png", base64: RELEASIT_LOGO_PNG_BASE64, filename: "releasit-logo.png" }] : undefined,
         threadId: existing?.gmailThreadId,

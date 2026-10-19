@@ -42,14 +42,14 @@ export type BrandedEmail = {
   senderName: string;
   senderEmail: string;
   colors?: EmailColors;
-  /** Button goes before body block N (0 = right under the headline); omitted/too large = after the body. */
+  /** Legacy single button: goes before body block N; omitted/too large = after the body. Prefer [button: …](…) blocks in the body. */
   buttonPosition?: number | null;
 };
 
 export type RenderOptions = {
   /** Image src for the logo: embedded data URI by default (previews), `cid:releasit-logo` when sending with the inline attachment. */
   logoSrc?: string;
-  /** Preview only: makes the button draggable and posts {type:"releasit-button-pos", position} to the parent. */
+  /** Preview only: makes buttons draggable; a drop posts {type:"releasit-move-block", from, to} to the parent. */
   editable?: boolean;
 };
 
@@ -65,30 +65,62 @@ function inlineText(text: string, link: string): string {
 
 const P_STYLE = `margin:0 0 18px 0;font-family:${FONT};font-size:16px;line-height:1.65;color:${TEXT};`;
 
-/** Plain-text body → HTML blocks: paragraphs, "- " bullet lists, and "1. " numbered steps with orange badges. */
-export function bodyBlocks(body: string, colors: EmailColors = DEFAULT_COLORS): string[] {
+/** A paragraph that is exactly `[button: Text](https://link)` becomes a CTA button. */
+const BUTTON_BLOCK = /^\[button:\s*([^\]]+?)\s*\]\(\s*(https?:\/\/[^\s)]+)\s*\)$/i;
+
+export const buttonSnippet = (label: string, url: string) => `[button: ${label.trim()}](${url.trim()})`;
+
+/** Splits the message into blocks: a blank line starts a new one. */
+export function splitBlocks(body: string): string[] {
   const trimmed = body.replace(/\r\n/g, "\n").trim();
-  if (!trimmed) return [];
+  return trimmed ? trimmed.split(/\n\s*\n/) : [];
+}
+
+/** Moves block `from` so it sits before block `to` (to = blocks.length means the end). */
+export function moveBlock(body: string, from: number, to: number): string {
+  const blocks = splitBlocks(body);
+  if (from < 0 || from >= blocks.length || to < 0 || to > blocks.length) return body;
+  const [moved] = blocks.splice(from, 1);
+  blocks.splice(to > from ? to - 1 : to, 0, moved);
+  return blocks.join("\n\n");
+}
+
+/** Button blocks as "Text: link" lines, for plain-text emails. */
+export function buttonsToPlainText(body: string): string {
+  return body.replace(/^\[button:\s*([^\]]+?)\s*\]\(\s*(https?:\/\/[^\s)]+)\s*\)$/gim, "$1: $2");
+}
+
+function buttonHtml(label: string, url: string, color: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:12px auto 28px auto;"><tr>
+<td style="border-radius:6px;background:${color};">
+<a href="${escapeHtml(url)}" style="display:inline-block;padding:16px 36px;font-family:${FONT};font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">${escapeHtml(label)}</a>
+</td></tr></table>`;
+}
+
+/** One block → HTML: paragraph, "- " bullet list, "1. " numbered step, or a [button: …](…) CTA. */
+function blockHtml(block: string, colors: EmailColors): string {
   const inline = (t: string) => inlineText(t, colors.secondary);
-  return trimmed
-    .split(/\n\s*\n/)
-    .map((block) => {
-      const lines = block.split("\n").map((l) => l.trimEnd());
-      if (lines.every((l) => /^\s*[-•*]\s+/.test(l))) {
-        const items = lines.map((l) => `<li style="margin:0 0 8px 0;">${inline(l.replace(/^\s*[-•*]\s+/, ""))}</li>`).join("");
-        return `<ul style="${P_STYLE}padding-left:22px;">${items}</ul>`;
-      }
-      const step = lines[0].match(/^\s*(\d+)[.)]\s+(.*)$/);
-      if (step) {
-        const [, num, title] = step;
-        const rest = lines.slice(1).join("<br>");
-        return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 6px 0;"><tr>
+  const btn = block.trim().match(BUTTON_BLOCK);
+  if (btn) return buttonHtml(btn[1], btn[2], colors.button);
+  const lines = block.split("\n").map((l) => l.trimEnd());
+  if (lines.every((l) => /^\s*[-•*]\s+/.test(l))) {
+    const items = lines.map((l) => `<li style="margin:0 0 8px 0;">${inline(l.replace(/^\s*[-•*]\s+/, ""))}</li>`).join("");
+    return `<ul style="${P_STYLE}padding-left:22px;">${items}</ul>`;
+  }
+  const step = lines[0].match(/^\s*(\d+)[.)]\s+(.*)$/);
+  if (step) {
+    const [, num, title] = step;
+    const rest = lines.slice(1);
+    return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 6px 0;"><tr>
 <td valign="middle" style="width:38px;height:38px;border-radius:19px;background:${colors.accent};color:#ffffff;font-family:${FONT};font-size:15px;font-weight:bold;text-align:center;">${num}</td>
 <td valign="middle" style="padding-left:16px;font-family:${FONT};font-size:18px;font-weight:bold;line-height:1.35;color:${INK};">${inline(title)}</td>
-</tr></table>${rest ? `<p style="${P_STYLE}">${lines.slice(1).map(inline).join("<br>")}</p>` : ""}`;
-      }
-      return `<p style="${P_STYLE}">${lines.map(inline).join("<br>")}</p>`;
-    });
+</tr></table>${rest.length ? `<p style="${P_STYLE}">${rest.map(inline).join("<br>")}</p>` : ""}`;
+  }
+  return `<p style="${P_STYLE}">${lines.map(inline).join("<br>")}</p>`;
+}
+
+export function bodyBlocks(body: string, colors: EmailColors = DEFAULT_COLORS): string[] {
+  return splitBlocks(body).map((b) => blockHtml(b, colors));
 }
 
 export function bodyToHtml(body: string, colors: EmailColors = DEFAULT_COLORS): string {
@@ -99,20 +131,22 @@ const EDIT_SCRIPT = `<style>
 .rd-drop{height:6px;margin:2px 0;border-radius:4px;transition:all .1s}
 body.rd-dragging .rd-drop{height:26px;border:2px dashed #b9c3d6;background:#f4f7fc}
 body.rd-dragging .rd-drop.rd-over{border-color:#2458D4;background:#e3ebfb}
-.rd-btn{cursor:grab;outline:1px dashed transparent;outline-offset:6px;border-radius:8px}
+.rd-btn{cursor:grab;outline:1px dashed transparent;outline-offset:4px;border-radius:8px}
 .rd-btn:hover{outline-color:#b9c3d6}
-.rd-btn[data-tip]:hover::after{content:attr(data-tip);display:block;text-align:center;font:12px Helvetica,Arial,sans-serif;color:#8a8a8a;margin-top:6px}
+.rd-btn:hover::after{content:"Drag to move this button";display:block;text-align:center;font:12px Helvetica,Arial,sans-serif;color:#8a8a8a;margin:-18px 0 10px 0}
 </style><script>
 (function(){
-  var btn=document.querySelector('.rd-btn');if(!btn)return;
-  btn.addEventListener('click',function(e){e.preventDefault();});
-  btn.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain','button');e.dataTransfer.effectAllowed='move';setTimeout(function(){document.body.classList.add('rd-dragging');},0);});
-  btn.addEventListener('dragend',function(){document.body.classList.remove('rd-dragging');});
+  var from=null;
+  document.querySelectorAll('.rd-btn').forEach(function(btn){
+    btn.addEventListener('click',function(e){e.preventDefault();});
+    btn.addEventListener('dragstart',function(e){from=Number(btn.getAttribute('data-block'));e.dataTransfer.setData('text/plain','button');e.dataTransfer.effectAllowed='move';setTimeout(function(){document.body.classList.add('rd-dragging');},0);});
+    btn.addEventListener('dragend',function(){document.body.classList.remove('rd-dragging');});
+  });
   document.querySelectorAll('.rd-drop').forEach(function(z){
     z.addEventListener('dragover',function(e){e.preventDefault();z.classList.add('rd-over');});
     z.addEventListener('dragleave',function(){z.classList.remove('rd-over');});
-    z.addEventListener('drop',function(e){e.preventDefault();document.body.classList.remove('rd-dragging');
-      parent.postMessage({type:'releasit-button-pos',position:Number(z.getAttribute('data-pos'))},'*');});
+    z.addEventListener('drop',function(e){e.preventDefault();z.classList.remove('rd-over');document.body.classList.remove('rd-dragging');
+      if(from!==null)parent.postMessage({type:'releasit-move-block',from:from,to:Number(z.getAttribute('data-pos'))},'*');from=null;});
   });
 })();
 </script>`;
@@ -120,29 +154,23 @@ body.rd-dragging .rd-drop.rd-over{border-color:#2458D4;background:#e3ebfb}
 export function renderBrandedEmail(e: BrandedEmail, opts: RenderOptions = {}): string {
   const colors = e.colors ?? DEFAULT_COLORS;
   const logoSrc = opts.logoSrc ?? `data:image/png;base64,${RELEASIT_LOGO_PNG_BASE64}`;
-  const blocks = bodyBlocks(e.body, colors);
-  const hasButton = !!(e.buttonLabel && e.buttonUrl);
-  const pos = e.buttonPosition == null || e.buttonPosition < 0 || e.buttonPosition > blocks.length ? blocks.length : Math.floor(e.buttonPosition);
-
-  const buttonTable = hasButton
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr>
-<td style="border-radius:6px;background:${colors.button};">
-<a href="${escapeHtml(e.buttonUrl!)}" style="display:inline-block;padding:16px 36px;font-family:${FONT};font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">${escapeHtml(e.buttonLabel!)}</a>
-</td></tr></table>`
-    : "";
-  const button = hasButton
-    ? `<tr><td align="center" style="padding:12px 0 28px 0;">${
-        opts.editable ? `<div class="rd-btn" draggable="true" data-tip="Drag me to move the button">${buttonTable}</div>` : buttonTable
-      }</td></tr>`
-    : "";
-  const drop = (i: number) => (opts.editable && hasButton ? `<tr><td><div class="rd-drop" data-pos="${i}"></div></td></tr>` : "");
+  const raw = splitBlocks(e.body);
+  // Older single-button fields: added as a button block at buttonPosition (default: end).
+  if (e.buttonLabel && e.buttonUrl) {
+    const pos = e.buttonPosition == null || e.buttonPosition < 0 || e.buttonPosition > raw.length ? raw.length : Math.floor(e.buttonPosition);
+    raw.splice(pos, 0, buttonSnippet(e.buttonLabel, e.buttonUrl));
+  }
+  const isButton = raw.map((b) => BUTTON_BLOCK.test(b.trim()));
+  const draggable = opts.editable && isButton.some(Boolean);
+  const drop = (i: number) => (draggable ? `<tr><td><div class="rd-drop" data-pos="${i}"></div></td></tr>` : "");
 
   let content = "";
-  for (let i = 0; i <= blocks.length; i++) {
-    if (i === pos) content += button;
-    else content += drop(i);
-    if (i < blocks.length) content += `<tr><td>${blocks[i]}</td></tr>\n`;
-  }
+  raw.forEach((block, i) => {
+    content += drop(i);
+    const html = blockHtml(block, colors);
+    content += `<tr><td>${draggable && isButton[i] ? `<div class="rd-btn" draggable="true" data-block="${i}">${html}</div>` : html}</td></tr>\n`;
+  });
+  content += drop(raw.length);
 
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(e.headline)}</title></head>
@@ -187,12 +215,12 @@ ${opts.editable ? EDIT_SCRIPT : ""}
 
 /** Plain-text version sent alongside the HTML (helps deliverability and text-only clients). */
 export function brandedToPlainText(e: BrandedEmail): string {
-  const blocks = e.body.replace(/\r\n/g, "\n").trim().replace(/\*\*(.+?)\*\*/g, "$1").split(/\n\s*\n/).filter(Boolean);
+  const blocks = splitBlocks(e.body.replace(/\*\*(.+?)\*\*/g, "$1"));
   if (e.buttonLabel && e.buttonUrl) {
     const pos = e.buttonPosition == null || e.buttonPosition < 0 || e.buttonPosition > blocks.length ? blocks.length : Math.floor(e.buttonPosition);
-    blocks.splice(pos, 0, `${e.buttonLabel}: ${e.buttonUrl}`);
+    blocks.splice(pos, 0, buttonSnippet(e.buttonLabel, e.buttonUrl));
   }
-  const parts = [`${e.greeting},`, [e.headline, e.highlight].filter(Boolean).join(" "), ...blocks];
+  const parts = [`${e.greeting},`, [e.headline, e.highlight].filter(Boolean).join(" "), ...blocks.map(buttonsToPlainText)];
   parts.push(`${e.senderName}\nReleasit · ${e.senderEmail}`, `Not the right fit? Just reply "no thanks" and we won't email you again.`);
   return parts.join("\n\n");
 }
