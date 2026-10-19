@@ -104,17 +104,56 @@ export async function setThreadCrmLabel(token: string, ownerEmail: string, threa
   });
 }
 
-/** Earliest message in the thread sent by someone other than the mailbox owner, if any. */
-export async function firstReplyAt(token: string, ownerEmail: string, threadId: string): Promise<Date | null> {
-  const thread = await gmailFetch<{ messages?: { internalDate: string; payload: { headers: { name: string; value: string }[] } }[] }>(
-    token,
-    `/threads/${threadId}?format=metadata&metadataHeaders=From`,
-  );
+export type ThreadActivity = {
+  /** First real reply from the other side (not an auto-reply or bounce). */
+  reply: { at: Date; snippet: string } | null;
+  /** First automatic reply (out of office / vacation responder) seen, if no real reply yet. */
+  autoReply: { at: Date; snippet: string } | null;
+  /** Delivery failure notice from a mail server. */
+  bounce: { at: Date } | null;
+};
+
+const AUTO_REPLY_SUBJECT = /out of (the )?office|automatic reply|auto.?reply|autoreply|abwesend|abwesenheit|fuera de la oficina|respuesta autom|absence|ausente|réponse automatique|risposta automatica|vacation|on leave/i;
+
+/** Reads a thread's messages (headers + snippet) and classifies what came back from the other side. */
+export async function analyzeThread(
+  token: string,
+  ownerEmail: string,
+  threadId: string,
+  ignoreBefore?: Date | null,
+): Promise<ThreadActivity> {
+  const thread = await gmailFetch<{
+    messages?: { internalDate: string; snippet?: string; payload: { headers: { name: string; value: string }[] } }[];
+  }>(token, `/threads/${threadId}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Auto-Submitted&metadataHeaders=X-Autoreply&metadataHeaders=X-Autorespond&metadataHeaders=Precedence`);
+
+  const result: ThreadActivity = { reply: null, autoReply: null, bounce: null };
   for (const m of thread.messages ?? []) {
-    const from = m.payload.headers.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
-    if (!from.toLowerCase().includes(ownerEmail.toLowerCase())) return new Date(Number(m.internalDate));
+    const at = new Date(Number(m.internalDate));
+    if (ignoreBefore && at <= ignoreBefore) continue;
+    const header = (name: string) => m.payload.headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+    const from = header("From").toLowerCase();
+    if (from.includes(ownerEmail.toLowerCase())) continue;
+    const snippet = (m.snippet ?? "").slice(0, 300);
+
+    if (/mailer-daemon|postmaster|mail delivery (subsystem|system)/i.test(from)) {
+      result.bounce ??= { at };
+      continue;
+    }
+    const autoSubmitted = header("Auto-Submitted");
+    const isAuto =
+      (autoSubmitted !== "" && autoSubmitted.toLowerCase() !== "no") ||
+      header("X-Autoreply") !== "" ||
+      header("X-Autorespond") !== "" ||
+      /auto_reply|bulk/i.test(header("Precedence")) ||
+      AUTO_REPLY_SUBJECT.test(header("Subject"));
+    if (isAuto) {
+      result.autoReply ??= { at, snippet };
+      continue;
+    }
+    result.reply = { at, snippet };
+    break;
   }
-  return null;
+  return result;
 }
 
 /** Gmail label name for a lead at a stage, e.g. "CRM/EuroAffiliates ReachOut/Contacted (2)". */

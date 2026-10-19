@@ -27,6 +27,7 @@ export async function moveLeadWithCopies(
   leadId: string,
   toStageName: string,
   actor: string,
+  opts: { record?: boolean } = {},
 ): Promise<{ id: string; name: string; pipelineName: string } | null> {
   const lead = await tx.lead.findUnique({
     where: { id: leadId },
@@ -47,7 +48,7 @@ export async function moveLeadWithCopies(
     ((await tx.lead.aggregate({ where: { stageId }, _max: { order: true } }))._max.order ?? -1) + 1;
 
   await tx.lead.update({ where: { id: leadId }, data: { stageId: target.id, order: await order(target.id) } });
-  await recordStageEvent(tx, { leadId, toStageId: target.id, fromStageName: lead.stage.name, actor });
+  if (opts.record !== false) await recordStageEvent(tx, { leadId, toStageId: target.id, fromStageName: lead.stage.name, actor });
 
   for (const copy of lead.copies) {
     const copyStage = await tx.stage.findFirst({
@@ -57,4 +58,20 @@ export async function moveLeadWithCopies(
     if (copyStage) await tx.lead.update({ where: { id: copy.id }, data: { stageId: copyStage.id, order: await order(copyStage.id) } });
   }
   return { ...target, pipelineName: lead.stage.pipeline.name };
+}
+
+/**
+ * Undoes the automatic "moved on reply" for a lead (e.g. the reply was an
+ * out-of-office or from the wrong person): moves it (and copies) back to the
+ * stage it came from and deletes that stage event so weekly stats don't count it.
+ */
+export async function revertReplyMove(tx: Prisma.TransactionClient, leadId: string): Promise<boolean> {
+  const event = await tx.leadStageEvent.findFirst({
+    where: { rootLeadId: leadId, actor: { startsWith: "gmail-reply" } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!event?.fromStageName) return false;
+  await moveLeadWithCopies(tx, leadId, event.fromStageName, "revert", { record: false });
+  await tx.leadStageEvent.delete({ where: { id: event.id } });
+  return true;
 }

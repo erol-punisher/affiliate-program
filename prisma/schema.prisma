@@ -447,10 +447,47 @@ model EmailThread {
   sentCount       Int       @default(1)
   lastSentAt      DateTime
   repliedAt       DateTime?
+  // "interested" | "not_interested" | "out_of_office" | "wrong_person" | "unsubscribe"
+  replyCategory   String?
+  replySnippet    String?
+  bouncedAt       DateTime?
+  // Messages at or before this time are ignored by reply detection (e.g. one marked out-of-office).
+  ignoreRepliesBefore DateTime?
+
+  sends EmailSend[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([ownerEmail, gmailThreadId])
   @@index([leadId])
+}
+
+// One row per email sent from the dashboard (a thread can have several).
+// Drives the per-user daily cap and per-template reply stats.
+model EmailSend {
+  id String @id @default(cuid())
+
+  threadId String
+  thread   EmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  ownerEmail     String
+  leadId         String?
+  templateStepId String?
+  sentAt         DateTime @default(now())
+
+  @@index([ownerEmail, sentAt])
+  @@index([templateStepId])
+}
+
+// Do-not-contact list: an email address or a whole domain that the dashboard
+// refuses to email (opt-outs, "not interested", bounces, manual entries).
+model SuppressedContact {
+  id      String  @id @default(cuid())
+  value   String  @unique // lowercased email ("a@b.com") or domain ("b.com")
+  kind    String // "email" | "domain"
+  reason  String // "unsubscribe" | "not_interested" | "bounce" | "wrong_person" | "manual"
+  addedBy String?
+
+  createdAt DateTime @default(now())
 }

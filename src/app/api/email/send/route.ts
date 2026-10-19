@@ -31,6 +31,11 @@ export async function POST(request: NextRequest) {
       subject: subject || "Partnership with Releasit",
       body: text,
       replyInThread: body?.replyInThread !== false,
+      templateStepId: typeof body?.templateStepId === "string" ? body.templateStepId : null,
+      icebreakers:
+        body?.icebreakers && typeof body.icebreakers === "object"
+          ? Object.fromEntries(Object.entries(body.icebreakers).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""))
+          : undefined,
     });
     return NextResponse.json({ results });
   } catch (err) {

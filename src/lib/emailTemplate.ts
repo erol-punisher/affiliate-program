@@ -8,6 +8,8 @@ export type TemplateLead = {
   websiteUrl?: string | null;
   socialsUrl?: string | null;
   referralLink?: string | null;
+  /** Approved AI-suggested opening line for this lead (only set at send time). */
+  icebreaker?: string | null;
 };
 
 export type TemplateSender = { name: string; email: string };
@@ -23,6 +25,7 @@ const firstWord = (s: string) => s.split(/[\s|,-]+/).filter(Boolean)[0] ?? s;
 
 export const TEMPLATE_VARIABLES: Variable[] = [
   { key: "first_name", label: "First name", group: "Lead", value: (l) => firstWord(l.name) },
+  { key: "icebreaker", label: "AI first line (generate & approve first)", group: "Lead", value: (l) => l.icebreaker ?? "" },
   { key: "name", label: "Full name / channel", group: "Lead", value: (l) => l.name },
   { key: "country", label: "Country", group: "Lead", value: (l) => l.country ?? "" },
   { key: "username", label: "Username", group: "Lead", value: (l) => l.username ?? "" },
