@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import Link from "next/link";
-import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon, MailIcon } from "@/components/icons";
+import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon, MailIcon, SearchIcon, XIcon } from "@/components/icons";
 import { EmailComposeModal, type EmailRecipient } from "@/components/EmailComposeModal";
 import { CsvImportModal } from "@/components/CsvImportModal";
 import { LeadModal, type LeadFormValues, EMPTY_LEAD_FORM } from "@/components/LeadModal";
@@ -61,6 +61,20 @@ type Props = {
   userEmail: string;
 };
 
+// Lower-case, accents stripped, so "jose" finds "José".
+const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function leadMatches(lead: Lead, terms: string[]): boolean {
+  const haystack = normalize(
+    [lead.name, lead.firstName, lead.username, lead.email, lead.country, lead.owner, lead.affiliateManager, lead.whatsapp, lead.websiteUrl, lead.socialsUrl]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return terms.every((t) => haystack.includes(t));
+}
+
+const MAX_SEARCH_RESULTS = 30;
+
 const STAGE_ACCENT: Record<string, string> = {
   green: "bg-emerald-500",
   red: "bg-red-500",
@@ -113,6 +127,11 @@ export function CrmBoard({ userEmail }: Props) {
   const [savingStage, setSavingStage] = useState(false);
   const [confirmDeleteStageId, setConfirmDeleteStageId] = useState<string | null>(null);
   const [deletingStage, setDeletingStage] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const [composeFor, setComposeFor] = useState<EmailRecipient[] | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
@@ -183,6 +202,40 @@ export function CrmBoard({ userEmail }: Props) {
     () => activeGroup?.pipelines.find((p) => p.id === activePipelineId) ?? null,
     [activeGroup, activePipelineId],
   );
+
+  const searchTerms = useMemo(() => normalize(search).split(/\s+/).filter(Boolean), [search]);
+  // Matches across every group and sub-pipeline (mirrored copies show once per pipeline they're in).
+  const searchResults = useMemo(() => {
+    if (!groups || searchTerms.length === 0) return [];
+    const out: { lead: Lead; group: PipelineGroup; pipeline: Pipeline; stage: Stage }[] = [];
+    for (const group of groups)
+      for (const pipeline of group.pipelines)
+        for (const stage of pipeline.stages)
+          for (const lead of stage.leads) if (leadMatches(lead, searchTerms)) out.push({ lead, group, pipeline, stage });
+    return out;
+  }, [groups, searchTerms]);
+
+  // "/" focuses the search box (unless typing somewhere already).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (e.key === "/" && !(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable))) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function openSearchResult(r: (typeof searchResults)[number]) {
+    setActiveGroupId(r.group.id);
+    setActivePipelineId(r.pipeline.id);
+    setHighlightedLeadId(r.lead.id);
+    setQuickViewLead(r.lead);
+    setSearchOpen(false);
+    requestAnimationFrame(() => document.getElementById(`lead-${r.lead.id}`)?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" }));
+  }
 
   function selectGroup(groupId: string) {
     setActiveGroupId(groupId);
@@ -559,6 +612,76 @@ export function CrmBoard({ userEmail }: Props) {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-zinc-100">CRM</h1>
             <p className="mt-0.5 text-sm text-zinc-500">Track leads through your pipelines</p>
+          </div>
+          <div className="relative mx-4 max-w-xl flex-1">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setSearch("");
+                  setHighlightedLeadId(null);
+                  e.currentTarget.blur();
+                }
+                if (e.key === "Enter" && searchResults[0]) openSearchResult(searchResults[0]);
+              }}
+              placeholder="Search leads in all pipelines — name, email, username, country, owner…  ( / )"
+              className="w-full rounded-lg border border-white/10 bg-white/5 py-1.5 pl-9 pr-8 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:ring-1 focus:ring-blue-500/50"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setHighlightedLeadId(null);
+                }}
+                title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
+              >
+                <XIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {searchOpen && searchTerms.length > 0 && (
+              <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-[28rem] overflow-y-auto rounded-lg border border-white/10 bg-[#10141f] shadow-2xl">
+                {searchResults.length === 0 ? (
+                  <p className="px-3 py-2.5 text-sm text-zinc-500">No leads match &ldquo;{search}&rdquo;</p>
+                ) : (
+                  <>
+                    {searchResults.slice(0, MAX_SEARCH_RESULTS).map((r) => (
+                      <button
+                        key={`${r.pipeline.id}-${r.lead.id}`}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => openSearchResult(r)}
+                        className="flex w-full flex-col items-start gap-0.5 border-b border-white/5 px-3 py-2 text-left last:border-b-0 hover:bg-white/5"
+                      >
+                        <span className="text-sm text-zinc-100">
+                          {r.lead.name}
+                          {r.lead.country && <span className="text-zinc-500"> ({r.lead.country})</span>}
+                        </span>
+                        <span className="text-xs text-zinc-500">
+                          {r.pipeline.name} › {r.stage.name}
+                          {r.lead.owner && ` · ${r.lead.owner}`}
+                          {r.lead.email && ` · ${r.lead.email}`}
+                        </span>
+                      </button>
+                    ))}
+                    {searchResults.length > MAX_SEARCH_RESULTS && (
+                      <p className="px-3 py-2 text-xs text-zinc-500">
+                        Showing {MAX_SEARCH_RESULTS} of {searchResults.length} — type more to narrow it down
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {gmailConnected !== null &&
@@ -958,7 +1081,9 @@ export function CrmBoard({ userEmail }: Props) {
                       <div className="min-w-0">
                         <h3 className="truncate text-sm font-semibold text-zinc-100">{stage.name}</h3>
                         <p className="text-xs text-zinc-500">
-                          {stage.leads.length} {stage.leads.length === 1 ? "lead" : "leads"}
+                          {searchTerms.length > 0
+                            ? `${stage.leads.filter((l) => leadMatches(l, searchTerms)).length} of ${stage.leads.length} match`
+                            : `${stage.leads.length} ${stage.leads.length === 1 ? "lead" : "leads"}`}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/stage:opacity-100">
@@ -1002,9 +1127,10 @@ export function CrmBoard({ userEmail }: Props) {
                       </div>
                     </div>
                     <div className="flex min-h-[60px] flex-1 flex-col gap-2 px-2.5 pb-2.5">
-                      {stage.leads.map((lead) => (
+                      {(searchTerms.length > 0 ? stage.leads.filter((l) => leadMatches(l, searchTerms)) : stage.leads).map((lead) => (
                         <div
                           key={lead.id}
+                          id={`lead-${lead.id}`}
                           role="button"
                           tabIndex={0}
                           draggable
@@ -1021,6 +1147,8 @@ export function CrmBoard({ userEmail }: Props) {
                             if (e.key === "Enter") setViewingLead(lead);
                           }}
                           className={`group/lead cursor-grab rounded-lg border px-3 py-2.5 text-left transition-all duration-150 active:cursor-grabbing ${
+                            highlightedLeadId === lead.id ? "ring-2 ring-blue-500/70 " : ""
+                          }${
                             draggedLeadId === lead.id
                               ? "rotate-2 scale-95 border-blue-500/50 bg-white/[0.03] opacity-40 shadow-lg"
                               : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
