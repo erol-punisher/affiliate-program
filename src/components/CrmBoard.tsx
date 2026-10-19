@@ -632,7 +632,7 @@ export function CrmBoard({ userEmail }: Props) {
                 }
                 if (e.key === "Enter" && searchResults[0]) openSearchResult(searchResults[0]);
               }}
-              placeholder="Search leads in all pipelines — name, email, username, country, owner…  ( / )"
+              placeholder="Search"
               className="w-full rounded-lg border border-white/10 bg-white/5 py-1.5 pl-9 pr-8 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:ring-1 focus:ring-blue-500/50"
             />
             {search && (
