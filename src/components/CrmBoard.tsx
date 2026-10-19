@@ -11,6 +11,7 @@ import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { LeadQuickViewPanel, type EditableLeadField } from "@/components/LeadQuickViewPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
+import { nextOutreachStage } from "@/lib/outreachStages";
 
 type Lead = {
   id: string;
@@ -19,6 +20,7 @@ type Lead = {
   notes: string | null;
   order: number;
   stageId: string;
+  sourceLeadId: string | null;
   username: string | null;
   firstName: string | null;
   owner: string | null;
@@ -133,12 +135,23 @@ export function CrmBoard({ userEmail }: Props) {
   const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Ticked cards (e.g. the leads just emailed), to move together with the bar at the bottom.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [moveTargetStageId, setMoveTargetStageId] = useState<string | null>(null);
+  const [bulkMoving, setBulkMoving] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+
   const [composeFor, setComposeFor] = useState<EmailRecipient[] | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   const [gmailNotice, setGmailNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    void loadGroups();
+    // ?select=<lead ids>: arriving from the Emails tab after sending — tick those leads.
+    const selectParam = new URLSearchParams(window.location.search).get("select");
+    if (selectParam) window.history.replaceState(null, "", "/crm");
+    void loadGroups().then((list) => {
+      if (selectParam && list) selectEmailed(selectParam.split(",").filter(Boolean), list);
+    });
     // Gmail: connection status, any result of the connect flow, and a reply check that may move leads.
     void fetch("/api/gmail/status")
       .then((r) => r.json())
@@ -163,7 +176,7 @@ export function CrmBoard({ userEmail }: Props) {
       .catch(() => {});
   }, []);
 
-  async function loadGroups(preferGroupId?: string, preferPipelineId?: string) {
+  async function loadGroups(preferGroupId?: string, preferPipelineId?: string): Promise<PipelineGroup[] | null> {
     setLoadError(null);
     try {
       const res = await fetch("/api/crm/groups");
@@ -188,8 +201,67 @@ export function CrmBoard({ userEmail }: Props) {
         if (wanted && group?.pipelines.some((p) => p.id === wanted)) return wanted;
         return group?.pipelines[0]?.id ?? null;
       });
+      return list;
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load CRM");
+      return null;
+    }
+  }
+
+  /**
+   * Ticks the cards of these leads (originals or their mirrored copies), staying on the
+   * current sub-pipeline if it has any of them, otherwise opening the one with the most.
+   */
+  function selectEmailed(leadIds: string[], list: PipelineGroup[]) {
+    const wanted = new Set(leadIds);
+    const matchesIn = (p: Pipeline) =>
+      p.stages.flatMap((st) => st.leads).filter((l) => wanted.has(l.id) || (l.sourceLeadId !== null && wanted.has(l.sourceLeadId)));
+    let best: { group: PipelineGroup; pipeline: Pipeline; cards: Lead[] } | null = null;
+    for (const group of list)
+      for (const pipeline of group.pipelines) {
+        const cards = matchesIn(pipeline);
+        if (!cards.length) continue;
+        const isCurrent = pipeline.id === activePipelineId;
+        if (isCurrent) best = { group, pipeline, cards };
+        if (best?.pipeline.id === activePipelineId) continue;
+        if (!best || cards.length > best.cards.length) best = { group, pipeline, cards };
+      }
+    if (!best) return;
+    setActiveGroupId(best.group.id);
+    setActivePipelineId(best.pipeline.id);
+    setSelectedIds(new Set(best.cards.map((c) => c.id)));
+    setMoveTargetStageId(null);
+    setBulkNotice(null);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function moveSelected(cards: Lead[], stageId: string) {
+    setBulkMoving(true);
+    setBulkNotice(null);
+    try {
+      const res = await fetch("/api/crm/leads/bulk-move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: cards.map((c) => c.id), stageId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Failed (${res.status})`);
+      setSelectedIds(new Set());
+      setMoveTargetStageId(null);
+      setBulkNotice(`Moved ${data.moved} ${data.moved === 1 ? "lead" : "leads"} to ${data.stageName}`);
+      await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
+    } catch (err) {
+      setBulkNotice(err instanceof Error ? err.message : "Couldn't move the leads");
+    } finally {
+      setBulkMoving(false);
     }
   }
 
@@ -202,6 +274,25 @@ export function CrmBoard({ userEmail }: Props) {
     () => activeGroup?.pipelines.find((p) => p.id === activePipelineId) ?? null,
     [activeGroup, activePipelineId],
   );
+
+  // Ticked cards on the board you're looking at, and the stage they'd most naturally go to next.
+  const selectedInView = useMemo(
+    () => (activePipeline ? activePipeline.stages.flatMap((st) => st.leads.filter((l) => selectedIds.has(l.id))) : []),
+    [activePipeline, selectedIds],
+  );
+  const suggestedStageId = useMemo(() => {
+    if (!activePipeline || selectedInView.length === 0) return null;
+    const counts = new Map<string, number>();
+    for (const l of selectedInView) counts.set(l.stageId, (counts.get(l.stageId) ?? 0) + 1);
+    const commonStageId = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const current = activePipeline.stages.find((st) => st.id === commonStageId);
+    const nextName = current ? nextOutreachStage(current.name) : null;
+    const byName = nextName && activePipeline.stages.find((st) => st.name.toLowerCase() === nextName.toLowerCase());
+    if (byName) return byName.id;
+    const idx = activePipeline.stages.findIndex((st) => st.id === commonStageId);
+    return activePipeline.stages[idx + 1]?.id ?? null;
+  }, [activePipeline, selectedInView]);
+  const moveTarget = moveTargetStageId ?? suggestedStageId ?? "";
 
   const searchTerms = useMemo(() => normalize(search).split(/\s+/).filter(Boolean), [search]);
   // Matches across every group and sub-pipeline (mirrored copies show once per pipeline they're in).
@@ -1148,14 +1239,24 @@ export function CrmBoard({ userEmail }: Props) {
                           }}
                           className={`group/lead cursor-grab rounded-lg border px-3 py-2.5 text-left transition-all duration-150 active:cursor-grabbing ${
                             highlightedLeadId === lead.id ? "ring-2 ring-blue-500/70 " : ""
-                          }${
+                          }${selectedIds.has(lead.id) ? "!border-blue-500/60 !bg-blue-500/10 " : ""}${
                             draggedLeadId === lead.id
                               ? "rotate-2 scale-95 border-blue-500/50 bg-white/[0.03] opacity-40 shadow-lg"
                               : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(lead.id)}
+                              onChange={() => toggleSelected(lead.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              title="Select to move with others"
+                              className={`mt-0.5 shrink-0 cursor-pointer accent-blue-500 transition-opacity ${
+                                selectedIds.size > 0 ? "opacity-100" : "opacity-0 group-hover/lead:opacity-100"
+                              }`}
+                            />
+                            <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-medium text-zinc-100">{lead.name}</p>
                               {lead.email && (
                                 <p className="mt-0.5 truncate text-xs text-zinc-500">{lead.email}</p>
@@ -1266,6 +1367,58 @@ export function CrmBoard({ userEmail }: Props) {
             )}
           </>
         )}
+        {(selectedInView.length > 0 || bulkNotice) && activePipeline && (
+          <div className="sticky bottom-4 z-30 mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-blue-500/40 bg-[#10141f]/95 px-4 py-3 shadow-2xl backdrop-blur">
+            {selectedInView.length > 0 ? (
+              <>
+                <span className="text-sm font-medium text-zinc-100">
+                  {selectedInView.length} {selectedInView.length === 1 ? "lead" : "leads"} selected
+                </span>
+                <span className="text-sm text-zinc-400">Move to</span>
+                <select
+                  value={moveTarget}
+                  onChange={(e) => setMoveTargetStageId(e.target.value)}
+                  className="rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500/50"
+                >
+                  <option value="" disabled className="bg-[#10141f]">
+                    Pick a stage…
+                  </option>
+                  {activePipeline.stages.map((st) => (
+                    <option key={st.id} value={st.id} className="bg-[#10141f]">
+                      {st.name}
+                      {st.id === suggestedStageId ? " (suggested)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!moveTarget || bulkMoving}
+                  onClick={() => void moveSelected(selectedInView, moveTarget)}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-zinc-100 hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {bulkMoving ? "Moving…" : "Move"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds(new Set());
+                    setMoveTargetStageId(null);
+                  }}
+                  className="ml-auto text-xs text-zinc-500 hover:text-zinc-300"
+                >
+                  Clear selection
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-sm text-zinc-200">{bulkNotice}</span>
+                <button type="button" onClick={() => setBulkNotice(null)} className="ml-auto text-xs text-zinc-500 hover:text-zinc-300">
+                  Dismiss
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </main>
 
       {(editingLead || addingLeadStageId) && (
@@ -1327,6 +1480,10 @@ export function CrmBoard({ userEmail }: Props) {
           pipelineName={activePipeline.name}
           onClose={() => setComposeFor(null)}
           onSent={() => void loadGroups(activeGroupId ?? undefined, activePipeline.id)}
+          onContinue={(ids) => {
+            setComposeFor(null);
+            void loadGroups(activeGroupId ?? undefined, activePipeline.id).then((list) => list && selectEmailed(ids, list));
+          }}
         />
       )}
 

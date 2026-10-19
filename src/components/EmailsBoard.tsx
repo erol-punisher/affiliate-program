@@ -7,6 +7,7 @@ import { EmailComposeModal, type EmailRecipient } from "@/components/EmailCompos
 import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
 import { REPLY_CATEGORIES } from "@/lib/emailRules";
 import { SignatureEditor } from "@/components/SignatureEditor";
+import { useRouter } from "next/navigation";
 
 type Lead = EmailRecipient;
 type Stage = { id: string; name: string; order: number; leads: Lead[] };
@@ -68,6 +69,7 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
 }
 
 export function EmailsBoard({ userEmail }: { userEmail: string }) {
+  const router = useRouter();
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -716,6 +718,7 @@ export function EmailsBoard({ userEmail }: { userEmail: string }) {
             setFollowSelected(new Set());
             void refreshAll();
           }}
+          onContinue={(ids) => router.push(`/crm?select=${ids.map(encodeURIComponent).join(",")}`)}
         />
       )}
     </div>

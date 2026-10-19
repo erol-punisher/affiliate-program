@@ -12,11 +12,20 @@ export class GmailNotConnectedError extends Error {
   }
 }
 
+// Access tokens last ~1h; reuse them while this server instance is warm instead of refreshing per email.
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
 /** Fresh access token for a connected mailbox. */
 export async function gmailAccessToken(ownerEmail: string): Promise<string> {
   const connection = await prisma.gmailConnection.findUnique({ where: { email: ownerEmail } });
-  if (!connection) throw new GmailNotConnectedError(ownerEmail);
+  if (!connection) {
+    tokenCache.delete(ownerEmail);
+    throw new GmailNotConnectedError(ownerEmail);
+  }
+  const cached = tokenCache.get(ownerEmail);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
   const tokens = await refreshAccessToken(decryptSecret(connection.encryptedRefreshToken));
+  tokenCache.set(ownerEmail, { token: tokens.access_token, expiresAt: Date.now() + (tokens.expires_in - 120) * 1000 });
   return tokens.access_token;
 }
 

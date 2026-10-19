@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { GmailNotConnectedError } from "@/lib/gmail";
 import { MAX_EMAILS_PER_SEND, parseBrandedLayout, sendOutreachEmails } from "@/lib/emailOutreach";
@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       templateStepId: typeof body?.templateStepId === "string" ? body.templateStepId : null,
       branded: parseBrandedLayout(body?.branded),
       useSignature: body?.useSignature === true,
+      defer: (task) => after(task),
       icebreakers:
         body?.icebreakers && typeof body.icebreakers === "object"
           ? Object.fromEntries(Object.entries(body.icebreakers).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim() !== ""))

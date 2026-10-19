@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
-import { movesOnReply, moveLeadWithCopies, nextOutreachStage, revertReplyMove } from "@/lib/crmMoves";
+import { movesOnReply, moveLeadWithCopies, revertReplyMove } from "@/lib/crmMoves";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
 import { LOGO_CID, brandedToPlainText, buttonsToPlainText, renderBrandedEmail, renderPlainEmail, sanitizeColors, type EmailColors } from "@/lib/emailHtml";
 import { getSignature, signatureToText } from "@/lib/emailSignature";
@@ -19,6 +19,7 @@ const GAP_BETWEEN_SENDS_MS = 1200;
 const INTERESTED_STAGE = "Responded with Interest";
 const DISINTEREST_STAGE = "Responded with Disinterest";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const JUST_SENT_WINDOW_MS = 30 * 60 * 1000;
 
 /** Optional branded HTML layout; every field may use {{variables}}. */
 export type BrandedLayout = {
@@ -157,8 +158,8 @@ export async function sentTodayCount(ownerEmail: string): Promise<number> {
  * skips leads that are on the do-not-contact list, were emailed by a teammate
  * recently, or would get a blank {{variable}}; it stops at the daily cap. A lead
  * who already has a thread from this sender gets the email as a reply in that
- * thread (when `replyInThread`). After sending, the lead moves up one outreach
- * stage (with its copies) and the thread is labelled CRM/<pipeline>/<stage>.
+ * thread (when `replyInThread`). The thread is labelled CRM/<pipeline>/<stage>;
+ * stages are left alone (the sender moves the leads on the board afterwards).
  */
 export async function sendOutreachEmails(args: {
   senderEmail: string;
@@ -171,6 +172,8 @@ export async function sendOutreachEmails(args: {
   icebreakers?: Record<string, string>;
   branded?: BrandedLayout | null;
   useSignature?: boolean;
+  /** Runs non-essential Gmail work (labelling) after the response, e.g. Next's after(). Default: inline. */
+  defer?: (task: () => Promise<void>) => void;
 }): Promise<SendResult[]> {
   const token = await gmailAccessToken(args.senderEmail);
   const signatureHtml = args.useSignature ? await getSignature(args.senderEmail) : null;
@@ -226,6 +229,15 @@ export async function sendOutreachEmails(args: {
       where: { leadId, ownerEmail: { not: args.senderEmail }, lastSentAt: { gte: new Date(Date.now() - TEAMMATE_WINDOW_DAYS * DAY_MS) } },
       orderBy: { lastSentAt: "desc" },
     });
+    // The composer sends one lead per request, so a lead and its mirrored copy arrive separately; this also stops double clicks.
+    const justSent = await prisma.emailSend.findFirst({
+      where: { leadId, ownerEmail: args.senderEmail, sentAt: { gte: new Date(Date.now() - JUST_SENT_WINDOW_MS) } },
+      select: { id: true },
+    });
+    if (justSent) {
+      skip("Already emailed by you in the last 30 minutes");
+      continue;
+    }
     if (teammate) {
       skip(`Already emailed by ${teammate.ownerEmail} on ${teammate.lastSentAt.toISOString().slice(0, 10)}`);
       continue;
@@ -272,14 +284,10 @@ export async function sendOutreachEmails(args: {
       sentSoFar++;
       remaining--;
 
-      // Move up one stage (with copies) and remember the thread + this send.
-      const next = nextOutreachStage(lead.stage.name);
-      const moved = await prisma.$transaction(async (tx) => {
-        const target = next ? await moveLeadWithCopies(tx, leadId, next, args.senderEmail) : null;
-        if (!lead.dateOfReachOut) await tx.lead.update({ where: { id: leadId }, data: { dateOfReachOut: new Date() } });
-        return target;
-      });
-      const labelName = crmLabelName(lead.stage.pipeline.name, moved?.name ?? lead.stage.name);
+      // Stages aren't changed here: the sender moves the emailed leads on the CRM board right after
+      // (they come back pre-selected there). The thread label follows when they do.
+      if (!lead.dateOfReachOut) await prisma.lead.update({ where: { id: leadId }, data: { dateOfReachOut: new Date() } });
+      const labelName = crmLabelName(lead.stage.pipeline.name, lead.stage.name);
       const now = new Date();
       const thread =
         existing && existing.gmailThreadId === sent.threadId
@@ -293,8 +301,10 @@ export async function sendOutreachEmails(args: {
       await prisma.emailSend.create({
         data: { threadId: thread.id, ownerEmail: args.senderEmail, leadId, templateStepId: args.templateStepId ?? null, sentAt: now },
       });
-      await setThreadCrmLabel(token, args.senderEmail, sent.threadId, labelName).catch((err) => console.error("label failed", err));
-      results.push({ leadId, name: lead.name, status: "sent", detail: moved ? `Moved to ${moved.name}` : undefined });
+      const label = () => setThreadCrmLabel(token, args.senderEmail, sent.threadId, labelName).catch((err) => console.error("label failed", err));
+      if (args.defer) args.defer(label);
+      else await label();
+      results.push({ leadId, name: lead.name, status: "sent" });
     } catch (err) {
       console.error("send failed", leadId, err);
       results.push({ leadId, name: lead.name, status: "failed", detail: err instanceof Error ? err.message.slice(0, 200) : "Send failed" });

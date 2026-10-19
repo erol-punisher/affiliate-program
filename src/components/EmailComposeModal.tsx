@@ -31,11 +31,14 @@ export function EmailComposeModal({
   pipelineName,
   onClose,
   onSent,
+  onContinue,
 }: {
   recipients: EmailRecipient[];
   pipelineName: string;
   onClose: () => void;
   onSent: () => void;
+  /** Called with the ids of the emailed leads so they can be moved on the CRM board (automatically when all went out). */
+  onContinue?: (sentLeadIds: string[]) => void;
 }) {
   const [gmail, setGmail] = useState<{ connected: boolean; name: string; email: string } | null>(null);
   const [cadences, setCadences] = useState<Cadence[]>([]);
@@ -277,8 +280,11 @@ export function EmailComposeModal({
         if (data.needsGmail) setGmail((prev) => ({ connected: false, name: prev?.name ?? "", email: prev?.email ?? "" }));
         throw new Error(data.error ?? `Failed (${res.status})`);
       }
-      setResults(data.results ?? []);
+      const sendResults: SendResult[] = data.results ?? [];
+      setResults(sendResults);
       onSent();
+      const sentIds = sendResults.filter((r) => r.status === "sent").map((r) => r.leadId);
+      if (onContinue && sentIds.length > 0 && sentIds.length === sendResults.length) onContinue(sentIds);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sending failed");
     } finally {
@@ -328,6 +334,15 @@ export function EmailComposeModal({
                   </li>
                 ))}
               </ul>
+              {onContinue && results.some((r) => r.status === "sent") && (
+                <button
+                  type="button"
+                  onClick={() => onContinue(results.filter((r) => r.status === "sent").map((r) => r.leadId))}
+                  className="mt-2 self-start rounded-md bg-blue-600 px-3 py-1.5 text-sm text-zinc-100 hover:bg-blue-500"
+                >
+                  Move the {results.filter((r) => r.status === "sent").length} emailed leads to their next stage →
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-4">
@@ -666,8 +681,8 @@ export function EmailComposeModal({
               </section>
 
               <p className="text-xs text-zinc-500">
-                After sending, each lead moves up one stage (Contacted → Contacted (2) → Contacted (3)) and the Gmail thread is labelled
-                CRM / {pipelineName} / stage.
+                After sending you&apos;re taken to the CRM with the emailed leads ticked, to move them to the right stage. The Gmail thread is
+                labelled CRM / {pipelineName} / stage.
               </p>
             </div>
           )}
