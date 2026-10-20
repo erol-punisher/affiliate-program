@@ -20,10 +20,12 @@ type OutreachData = {
   pipelines: string[];
 };
 
-const METRICS: { key: keyof Targets; label: string; hint: string }[] = [
-  { key: "contacted", label: "Contacted", hint: "Moved into Contacted, Contacted (2) or Contacted (3), or a logged DM" },
-  { key: "responded", label: "Responded", hint: "Moved into any Responded… stage" },
+// Contacted is reported as a plain count; only responses with interest have a weekly target.
+const METRICS: { key: keyof Targets; label: string; hint: string; hasTarget: boolean }[] = [
+  { key: "contacted", label: "Contacted", hint: "Moved into Contacted, Contacted (2) or Contacted (3), or a logged DM", hasTarget: false },
+  { key: "responded", label: "Responded with interest", hint: "Moved into Responded with Interest (incl. For a Fee)", hasTarget: true },
 ];
+const TARGETED = METRICS.filter((m) => m.hasTarget);
 
 function weekLabel(weekStart: string): string {
   const start = new Date(`${weekStart}T00:00:00Z`);
@@ -173,15 +175,16 @@ export function WeeklyOutreachSection() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {METRICS.map((m) => {
               const value = thisWeek?.[m.key] ?? 0;
-              const target = data.targets[m.key];
-              const progress = target > 0 ? Math.min(100, (value / target) * 100) : 0;
+              const target = m.hasTarget ? data.targets[m.key] : 0;
+              // Without a target the contacted bar is just the channel split of this week's total.
+              const progress = m.hasTarget ? (target > 0 ? Math.min(100, (value / target) * 100) : 0) : value > 0 ? 100 : 0;
               const hit = target > 0 && value >= target;
               return (
                 <div key={m.key} className="rounded-2xl border border-white/[0.08] bg-[#10141f] px-5 py-4" title={m.hint}>
                   <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">{m.label} this week</p>
                   <p className="mt-1.5 text-3xl font-semibold text-zinc-100">
                     {value}
-                    <span className="ml-1 text-base font-normal text-zinc-500">/ {target}</span>
+                    {m.hasTarget && <span className="ml-1 text-base font-normal text-zinc-500">/ {target}</span>}
                   </p>
                   {m.key === "contacted" ? (
                     <ChannelBar counts={thisWeek ? data.channelCounts[thisWeek.weekStart] : undefined} progress={progress} hit={hit} />
@@ -206,8 +209,8 @@ export function WeeklyOutreachSection() {
           <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             {editing && draft ? (
               <>
-                <span>Weekly targets:</span>
-                {METRICS.map((m) => (
+                <span>Weekly target:</span>
+                {TARGETED.map((m) => (
                   <label key={m.key} className="flex items-center gap-1.5">
                     {m.label}
                     <input
@@ -238,7 +241,7 @@ export function WeeklyOutreachSection() {
             ) : (
               <>
                 <span>
-                  Weekly targets: {data.targets.contacted} contacted · {data.targets.responded} responded
+                  Weekly target: {data.targets.responded} responded with interest
                   {data.targetsUpdatedBy && ` (set by ${data.targetsUpdatedBy})`}
                 </span>
                 <button
@@ -264,8 +267,8 @@ export function WeeklyOutreachSection() {
                   <th className="px-3 py-2 text-right font-medium" title="Affiliates contacted on each channel; one reached on two channels counts in both">
                     Channels
                   </th>
-                  <th className="px-3 py-2 text-right font-medium">Responded</th>
-                  <th className="px-3 py-2 text-right font-medium" title="Responded ÷ contacted that week">Response rate</th>
+                  <th className="px-3 py-2 text-right font-medium">With interest</th>
+                  <th className="px-3 py-2 text-right font-medium" title="Responded with interest ÷ contacted that week">Interest rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -283,7 +286,7 @@ export function WeeklyOutreachSection() {
                           {weekLabel(w.weekStart)}
                           {i === 0 && <span className="ml-2 text-[10px] uppercase text-blue-400">this week</span>}
                         </td>
-                        <TargetCell value={w.contacted} target={data.targets.contacted} />
+                        <TargetCell value={w.contacted} target={0} />
                         <td className="px-3 py-2 text-right text-xs">
                           <ChannelCountsInline counts={data.channelCounts[w.weekStart]} />
                         </td>

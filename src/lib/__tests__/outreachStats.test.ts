@@ -9,13 +9,14 @@ const ev = (rootLeadId: string, toStageName: string, iso: string, pipelineName =
 });
 
 describe("classifyStage", () => {
-  it("counts first contacts and follow-ups as contacted, any Responded stage as responded", () => {
+  it("counts first contacts and follow-ups as contacted, only Responded with Interest stages as responded", () => {
     expect(classifyStage("Contacted")).toEqual(["contacted"]);
     expect(classifyStage("Contacted (2)")).toEqual(["contacted"]);
     expect(classifyStage("Contacted (3)")).toEqual(["contacted"]);
     expect(classifyStage("Responded with Interest")).toEqual(["responded"]);
     expect(classifyStage("Responded with Interest - For a Fee")).toEqual(["responded"]);
-    expect(classifyStage("Responded with disinterest")).toEqual(["responded"]);
+    expect(classifyStage("Responded with disinterest")).toEqual([]);
+    expect(classifyStage("Responded with Disinterest")).toEqual([]);
     expect(classifyStage("Closed Won")).toEqual([]);
     expect(classifyStage("Affiliates in the Pipeline")).toEqual([]);
   });
@@ -43,7 +44,7 @@ describe("weeklyOutreachStats", () => {
     const weeks = weeklyOutreachStats(events, new Date("2026-10-06T00:00:00Z"), new Date("2026-10-16T00:00:00Z"));
     expect(weeks).toEqual([
       { weekStart: "2026-10-12", contacted: 3, responded: 1 },
-      { weekStart: "2026-10-05", contacted: 0, responded: 1 },
+      { weekStart: "2026-10-05", contacted: 0, responded: 0 },
     ]);
   });
 
@@ -66,7 +67,7 @@ describe("averagePerWeek / parseTargets", () => {
     ];
     expect(averagePerWeek(weeks, "contacted")).toBe(22.5);
     expect(averagePerWeek([], "contacted")).toBeNull();
-    expect(parseTargets('{"contacted":30,"responded":-1}')).toEqual({ contacted: 30, responded: 3 });
-    expect(parseTargets("not json")).toEqual({ contacted: 20, responded: 3 });
+    expect(parseTargets('{"contacted":30,"responded":-1}')).toEqual({ contacted: 30, responded: 2 });
+    expect(parseTargets("not json")).toEqual({ contacted: 20, responded: 2 });
   });
 });

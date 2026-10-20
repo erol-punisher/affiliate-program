@@ -8,7 +8,8 @@ export type OutreachTargets = {
   responded: number;
 };
 
-export const DEFAULT_OUTREACH_TARGETS: OutreachTargets = { contacted: 20, responded: 3 };
+// Only the responded-with-interest target is shown; contacted is reported without one.
+export const DEFAULT_OUTREACH_TARGETS: OutreachTargets = { contacted: 20, responded: 2 };
 export const OUTREACH_TARGETS_KEY = "outreachTargets";
 
 export type StageEventLite = {
@@ -23,7 +24,7 @@ export type StageEventLite = {
 export type WeekStats = {
   weekStart: string; // YYYY-MM-DD, Monday (UTC)
   contacted: number; // reached out to: moved into "Contacted", "Contacted (2)", "Contacted (3)", …
-  responded: number; // moved into any "Responded…" stage
+  responded: number; // moved into a "Responded with Interest…" stage
 };
 
 type Kind = "contacted" | "responded";
@@ -32,7 +33,7 @@ type Kind = "contacted" | "responded";
 export function classifyStage(stageName: string): Kind[] {
   const name = stageName.trim().toLowerCase();
   if (name === "contacted" || /^contacted \(\d+\)$/.test(name)) return ["contacted"];
-  if (name.startsWith("responded")) return ["responded"];
+  if (name.startsWith("responded with interest")) return ["responded"];
   return [];
 }
 

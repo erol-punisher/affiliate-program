@@ -39,7 +39,7 @@ describe("logged DMs and channels in weekly stats", () => {
 
   it("counts a touch as contacted whatever stage the lead is in", () => {
     expect(classifyEvent({ toStageName: "Responded", kind: "touch" })).toEqual(["contacted"]);
-    expect(classifyEvent({ toStageName: "Responded" })).toEqual(["responded"]);
+    expect(classifyEvent({ toStageName: "Responded with Interest" })).toEqual(["responded"]);
     const [week] = weeklyOutreachStats(events, at("2026-10-19T00:00:00Z"), at("2026-10-22T00:00:00Z"));
     expect(week).toEqual({ weekStart: "2026-10-19", contacted: 3, responded: 1 });
   });
