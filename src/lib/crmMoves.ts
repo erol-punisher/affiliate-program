@@ -15,7 +15,7 @@ export async function moveLeadWithCopies(
   toStageName: string,
   actor: string,
   opts: { record?: boolean } = {},
-): Promise<{ id: string; name: string; pipelineName: string } | null> {
+): Promise<{ id: string; name: string; pipelineName: string; event: Awaited<ReturnType<typeof recordStageEvent>> } | null> {
   const lead = await tx.lead.findUnique({
     where: { id: leadId },
     select: {
@@ -35,7 +35,8 @@ export async function moveLeadWithCopies(
     ((await tx.lead.aggregate({ where: { stageId }, _max: { order: true } }))._max.order ?? -1) + 1;
 
   await tx.lead.update({ where: { id: leadId }, data: { stageId: target.id, order: await order(target.id) } });
-  if (opts.record !== false) await recordStageEvent(tx, { leadId, toStageId: target.id, fromStageName: lead.stage.name, actor });
+  const event =
+    opts.record !== false ? await recordStageEvent(tx, { leadId, toStageId: target.id, fromStageName: lead.stage.name, actor }) : null;
 
   for (const copy of lead.copies) {
     const copyStage = await tx.stage.findFirst({
@@ -44,7 +45,7 @@ export async function moveLeadWithCopies(
     });
     if (copyStage) await tx.lead.update({ where: { id: copy.id }, data: { stageId: copyStage.id, order: await order(copyStage.id) } });
   }
-  return { ...target, pipelineName: lead.stage.pipeline.name };
+  return { ...target, pipelineName: lead.stage.pipeline.name, event };
 }
 
 /**

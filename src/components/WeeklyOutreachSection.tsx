@@ -1,14 +1,18 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import { CHANNEL_LABELS, OUTREACH_CHANNELS, type OutreachChannel } from "@/lib/outreachChannels";
+import { CHANNEL_STYLE, ChannelBadges, ChannelIcon } from "@/components/OutreachChannels";
 
 type Targets = { contacted: number; responded: number };
 type Week = { weekStart: string; contacted: number; responded: number };
 type Averages = Record<"last4" | "allTime", Record<keyof Targets, number | null>>;
-type ContactedLead = { id: string; name: string; country: string | null; pipeline: string; owner: string | null };
+type ContactedLead = { id: string; name: string; country: string | null; pipeline: string; owner: string | null; channels: string[] };
+type ChannelCounts = Record<OutreachChannel | "untagged", number>;
 type OutreachData = {
   weeks: Week[];
   contactedByWeek: Record<string, ContactedLead[]>;
+  channelCounts: Record<string, ChannelCounts>;
   averages: Averages;
   targets: Targets;
   targetsUpdatedBy: string | null;
@@ -17,7 +21,7 @@ type OutreachData = {
 };
 
 const METRICS: { key: keyof Targets; label: string; hint: string }[] = [
-  { key: "contacted", label: "Contacted", hint: "Moved into Contacted, Contacted (2) or Contacted (3)" },
+  { key: "contacted", label: "Contacted", hint: "Moved into Contacted, Contacted (2) or Contacted (3), or a logged DM" },
   { key: "responded", label: "Responded", hint: "Moved into any Responded… stage" },
 ];
 
@@ -30,6 +34,51 @@ function weekLabel(weekStart: string): string {
 
 function pct(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—";
+}
+
+/**
+ * A progress bar split by channel: the filled part is contacted ÷ target, divided in proportion
+ * to how many affiliates were reached on each channel (untagged in grey).
+ */
+function ChannelBar({ counts, progress, hit }: { counts: ChannelCounts | undefined; progress: number; hit: boolean }) {
+  const parts = [
+    ...OUTREACH_CHANNELS.map((c) => ({ key: c, n: counts?.[c] ?? 0, cls: CHANNEL_STYLE[c].bar })),
+    { key: "untagged", n: counts?.untagged ?? 0, cls: "bg-white/25" },
+  ].filter((p) => p.n > 0);
+  const total = parts.reduce((sum, p) => sum + p.n, 0);
+  return (
+    <div className={`mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-white/5 ${hit ? "ring-1 ring-emerald-500/60" : ""}`}>
+      {total === 0 ? (
+        <div className={`h-full ${hit ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${progress}%` }} />
+      ) : (
+        parts.map((p) => <div key={p.key} className={`h-full ${p.cls}`} style={{ width: `${(progress * p.n) / total}%` }} />)
+      )}
+    </div>
+  );
+}
+
+/** "9 · 4 · 1" with channel icons; untagged shown as a muted count. */
+function ChannelCountsInline({ counts }: { counts: ChannelCounts | undefined }) {
+  if (!counts) return <span className="text-zinc-600">—</span>;
+  const shown = OUTREACH_CHANNELS.filter((c) => counts[c] > 0);
+  if (shown.length === 0 && counts.untagged === 0) return <span className="text-zinc-600">—</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1">
+      {shown.map((c) => (
+        <span key={c} className="inline-flex items-center gap-1" title={`${counts[c]} via ${CHANNEL_LABELS[c]}`}>
+          <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full ring-1 ${CHANNEL_STYLE[c].badge}`}>
+            <ChannelIcon channel={c} className="h-2.5 w-2.5" />
+          </span>
+          <span className="tabular-nums text-zinc-300">{counts[c]}</span>
+        </span>
+      ))}
+      {counts.untagged > 0 && (
+        <span className="tabular-nums text-zinc-600" title={`${counts.untagged} without a channel`}>
+          +{counts.untagged} untagged
+        </span>
+      )}
+    </span>
+  );
 }
 
 function TargetCell({ value, target }: { value: number; target: number }) {
@@ -97,7 +146,7 @@ export function WeeklyOutreachSection() {
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Weekly outreach</h2>
           <p className="mt-0.5 text-xs text-zinc-600">
-            Counted from stage changes, Monday–Sunday. Contacted includes follow-ups; each affiliate counts once per week, even with an overview copy.
+            Counted from stage changes and logged DMs, Monday–Sunday. Contacted includes follow-ups; each affiliate counts once per week, even with an overview copy.
             {data && ` Tracking since ${new Date(data.trackingSince).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.`}
           </p>
         </div>
@@ -134,9 +183,18 @@ export function WeeklyOutreachSection() {
                     {value}
                     <span className="ml-1 text-base font-normal text-zinc-500">/ {target}</span>
                   </p>
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
-                    <div className={`h-full ${hit ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${progress}%` }} />
-                  </div>
+                  {m.key === "contacted" ? (
+                    <ChannelBar counts={thisWeek ? data.channelCounts[thisWeek.weekStart] : undefined} progress={progress} hit={hit} />
+                  ) : (
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+                      <div className={`h-full ${hit ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${progress}%` }} />
+                    </div>
+                  )}
+                  {m.key === "contacted" && thisWeek && data.channelCounts[thisWeek.weekStart] && (
+                    <div className="mt-2 flex justify-start text-xs">
+                      <ChannelCountsInline counts={data.channelCounts[thisWeek.weekStart]} />
+                    </div>
+                  )}
                   <p className="mt-2 text-xs text-zinc-500">
                     Avg/week: {data.averages.last4[m.key] ?? "—"} (last 4) · {data.averages.allTime[m.key] ?? "—"} (all)
                   </p>
@@ -203,6 +261,9 @@ export function WeeklyOutreachSection() {
                 <tr className="border-b border-white/10 text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2 text-left font-medium">Week</th>
                   <th className="px-3 py-2 text-right font-medium">Contacted</th>
+                  <th className="px-3 py-2 text-right font-medium" title="Affiliates contacted on each channel; one reached on two channels counts in both">
+                    Channels
+                  </th>
                   <th className="px-3 py-2 text-right font-medium">Responded</th>
                   <th className="px-3 py-2 text-right font-medium" title="Responded ÷ contacted that week">Response rate</th>
                 </tr>
@@ -223,12 +284,15 @@ export function WeeklyOutreachSection() {
                           {i === 0 && <span className="ml-2 text-[10px] uppercase text-blue-400">this week</span>}
                         </td>
                         <TargetCell value={w.contacted} target={data.targets.contacted} />
+                        <td className="px-3 py-2 text-right text-xs">
+                          <ChannelCountsInline counts={data.channelCounts[w.weekStart]} />
+                        </td>
                         <TargetCell value={w.responded} target={data.targets.responded} />
                         <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{pct(w.responded, w.contacted)}</td>
                       </tr>
                       {isOpen && (
                         <tr className="border-b border-white/[0.04] bg-white/[0.02]">
-                          <td colSpan={4} className="px-6 py-3">
+                          <td colSpan={5} className="px-6 py-3">
                             {contacted.length === 0 ? (
                               <p className="text-xs text-zinc-500">No one reached out to this week.</p>
                             ) : (
@@ -241,6 +305,11 @@ export function WeeklyOutreachSection() {
                                     {l.pipeline}
                                     <span className="text-zinc-600"> - </span>
                                     <span className={l.owner ? "" : "text-zinc-500"}>{l.owner ?? "No owner"}</span>
+                                    {l.channels.length > 0 && (
+                                      <span className="ml-2 inline-flex align-middle">
+                                        <ChannelBadges channels={l.channels} />
+                                      </span>
+                                    )}
                                   </li>
                                 ))}
                               </ol>

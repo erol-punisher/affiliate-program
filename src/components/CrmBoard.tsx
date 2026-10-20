@@ -12,6 +12,16 @@ import { LeadQuickViewPanel, type EditableLeadField } from "@/components/LeadQui
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
 import { nextOutreachStage } from "@/lib/outreachStages";
+import { CHANNEL_LABELS, profileHref, socialPlatform, type OutreachChannel } from "@/lib/outreachChannels";
+import {
+  ChannelBadges,
+  ChannelPicker,
+  ChatIcon,
+  InstagramIcon,
+  LinkedInIcon,
+  lastUsedChannels,
+  rememberChannels,
+} from "@/components/OutreachChannels";
 
 type Lead = {
   id: string;
@@ -33,8 +43,16 @@ type Lead = {
   dateOfReachOut: string | null;
   socialsUrl: string | null;
   closingDate: string | null;
+  outreachChannels: string[];
   updatedAt: string;
 };
+
+// The floating "which channel?" bar: after a move into a Contacted stage ("tag"), or to log a DM ("log").
+type ChannelPrompt =
+  | { mode: "tag"; key: number; eventIds: string[]; title: string; initial: OutreachChannel[]; autoEmail: boolean }
+  | { mode: "log"; key: number; lead: Lead; initial: OutreachChannel[] };
+
+type OutreachInfo = { eventIds: string[]; channels: OutreachChannel[] } | null;
 
 type Stage = {
   id: string;
@@ -140,6 +158,10 @@ export function CrmBoard({ userEmail }: Props) {
   const [moveTargetStageId, setMoveTargetStageId] = useState<string | null>(null);
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+
+  const [channelPrompt, setChannelPrompt] = useState<ChannelPrompt | null>(null);
+  const [channelBusy, setChannelBusy] = useState(false);
+  const [channelError, setChannelError] = useState<string | null>(null);
 
   const [composeFor, setComposeFor] = useState<EmailRecipient[] | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
@@ -257,11 +279,66 @@ export function CrmBoard({ userEmail }: Props) {
       setSelectedIds(new Set());
       setMoveTargetStageId(null);
       setBulkNotice(`Moved ${data.moved} ${data.moved === 1 ? "lead" : "leads"} to ${data.stageName}`);
+      const count = (data.outreach as OutreachInfo)?.eventIds.length ?? 0;
+      askChannels(data.outreach, `${count} ${count === 1 ? "lead" : "leads"} → ${data.stageName}`);
       await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
     } catch (err) {
       setBulkNotice(err instanceof Error ? err.message : "Couldn't move the leads");
     } finally {
       setBulkMoving(false);
+    }
+  }
+
+  /** After a move into a Contacted stage: ask which channel(s) were used (email is pre-ticked if it was emailed). */
+  function askChannels(outreach: OutreachInfo, title: string) {
+    if (!outreach || outreach.eventIds.length === 0) return;
+    const autoEmail = outreach.channels.includes("email");
+    setChannelError(null);
+    setChannelPrompt({
+      mode: "tag",
+      key: Date.now(),
+      eventIds: outreach.eventIds,
+      title,
+      initial: outreach.channels.length > 0 ? outreach.channels : lastUsedChannels(),
+      autoEmail,
+    });
+  }
+
+  function askLogDm(lead: Lead, preset?: OutreachChannel) {
+    setChannelError(null);
+    setChannelPrompt({ mode: "log", key: Date.now(), lead, initial: preset ? [preset] : lastUsedChannels().filter((c) => c !== "email") });
+  }
+
+  async function confirmChannels(channels: OutreachChannel[]) {
+    if (!channelPrompt) return;
+    setChannelBusy(true);
+    setChannelError(null);
+    try {
+      const res =
+        channelPrompt.mode === "tag"
+          ? await fetch("/api/crm/outreach/channels", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ eventIds: channelPrompt.eventIds, channels }),
+            })
+          : await fetch(`/api/crm/leads/${channelPrompt.lead.id}/touch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ channels }),
+            });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Failed (${res.status})`);
+      rememberChannels(channels);
+      if (channelPrompt.mode === "log") {
+        const via = channels.map((c) => CHANNEL_LABELS[c]).join(" + ");
+        setBulkNotice(`Logged ${via} reach-out to ${channelPrompt.lead.name} — counts towards this week`);
+      }
+      setChannelPrompt(null);
+      await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
+    } catch (err) {
+      setChannelError(err instanceof Error ? err.message : "Couldn't save the channels");
+    } finally {
+      setChannelBusy(false);
     }
   }
 
@@ -493,6 +570,10 @@ export function CrmBoard({ userEmail }: Props) {
         body: JSON.stringify({ stageId: targetStageId }),
       });
       if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      const targetName = activePipeline?.stages.find((s) => s.id === targetStageId)?.name ?? "Contacted";
+      askChannels(data.outreach ?? null, `${lead.name} → ${targetName}`);
+      if (data.outreach?.channels?.length) await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
     } catch {
       setLoadError("Failed to move card — reloading");
       await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
@@ -1261,8 +1342,25 @@ export function CrmBoard({ userEmail }: Props) {
                               {lead.email && (
                                 <p className="mt-0.5 truncate text-xs text-zinc-500">{lead.email}</p>
                               )}
+                              {lead.outreachChannels?.length > 0 && (
+                                <div className="mt-1.5">
+                                  <ChannelBadges channels={lead.outreachChannels} />
+                                </div>
+                              )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/lead:opacity-100">
+                              <ProfileLink lead={lead} onOpen={(platform) => askLogDm(lead, platform)} />
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  askLogDm(lead);
+                                }}
+                                title="Log a DM (Instagram, LinkedIn…)"
+                                className="text-zinc-500 transition-colors hover:text-zinc-200"
+                              >
+                                <ChatIcon className="h-3.5 w-3.5" />
+                              </button>
                               {lead.email && (
                                 <button
                                   type="button"
@@ -1367,7 +1465,42 @@ export function CrmBoard({ userEmail }: Props) {
             )}
           </>
         )}
-        {(selectedInView.length > 0 || bulkNotice) && activePipeline && (
+        {channelPrompt &&
+          (channelPrompt.mode === "tag" ? (
+            <ChannelPicker
+              key={channelPrompt.key}
+              title={
+                <>
+                  Reached via? <span className="font-normal text-zinc-400">{channelPrompt.title}</span>
+                </>
+              }
+              hint={channelPrompt.autoEmail ? "Email ticked: emailed from the dashboard. Add any DMs too." : "Pick all that apply"}
+              initial={channelPrompt.initial}
+              confirmLabel="Save"
+              busy={channelBusy}
+              error={channelError}
+              onConfirm={(channels) => void confirmChannels(channels)}
+              onSkip={() => setChannelPrompt(null)}
+            />
+          ) : (
+            <ChannelPicker
+              key={channelPrompt.key}
+              title={
+                <>
+                  Log a reach-out <span className="font-normal text-zinc-400">to {channelPrompt.lead.name}</span>
+                </>
+              }
+              hint="Stays in its stage · counts as contacted this week"
+              initial={channelPrompt.initial}
+              confirmLabel="Log"
+              requireOne
+              busy={channelBusy}
+              error={channelError}
+              onConfirm={(channels) => void confirmChannels(channels)}
+              onSkip={() => setChannelPrompt(null)}
+            />
+          ))}
+        {!channelPrompt && (selectedInView.length > 0 || bulkNotice) && activePipeline && (
           <div className="sticky bottom-4 z-30 mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-blue-500/40 bg-[#10141f]/95 px-4 py-3 shadow-2xl backdrop-blur">
             {selectedInView.length > 0 ? (
               <>
@@ -1617,5 +1750,37 @@ export function CrmBoard({ userEmail }: Props) {
         />
       )}
     </div>
+  );
+}
+
+/** Opens the lead's Instagram/LinkedIn/other profile in a new tab, then offers to log the DM. */
+function ProfileLink({ lead, onOpen }: { lead: Lead; onOpen: (platform: OutreachChannel) => void }) {
+  const href = profileHref(lead.socialsUrl);
+  const platform = socialPlatform(lead.socialsUrl);
+  if (!href || !platform) return null;
+  const label = platform === "other" ? "Open profile" : `Open ${CHANNEL_LABELS[platform]} profile`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      draggable={false}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(platform);
+      }}
+      title={`${label} (then log the DM)`}
+      className="text-zinc-500 transition-colors hover:text-zinc-200"
+    >
+      {platform === "instagram" ? (
+        <InstagramIcon className="h-3.5 w-3.5" />
+      ) : platform === "linkedin" ? (
+        <LinkedInIcon className="h-3.5 w-3.5" />
+      ) : (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+        </svg>
+      )}
+    </a>
   );
 }

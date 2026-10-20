@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { moveLeadWithCopies } from "@/lib/crmMoves";
 import { recordStageEvent } from "@/lib/outreachStats";
 import { relabelLeadThreads } from "@/lib/emailOutreach";
+import { parseChannels } from "@/lib/outreachChannels";
 
 const MAX_LEADS = 200;
 
@@ -30,6 +31,14 @@ export async function POST(request: NextRequest) {
 
   const roots = new Set<string>();
   let moved = 0;
+  // Moves into a Contacted stage, so the board can ask which channel(s) were used.
+  const outreachEventIds: string[] = [];
+  const autoChannels = new Set<string>();
+  const noteOutreach = (event: Awaited<ReturnType<typeof recordStageEvent>>) => {
+    if (!event?.contacted) return;
+    outreachEventIds.push(event.id);
+    event.channels.forEach((c) => autoChannels.add(c));
+  };
   for (const card of cards) {
     const rootId = card.sourceLeadId ?? card.id;
     if (roots.has(rootId)) continue;
@@ -37,12 +46,13 @@ export async function POST(request: NextRequest) {
     await prisma.$transaction(async (tx) => {
       // Moving the original carries every copy (including this card, if it is one) along.
       const viaRoot = await moveLeadWithCopies(tx, rootId, stage.name, session.email);
+      noteOutreach(viaRoot?.event ?? null);
       const now = await tx.lead.findUnique({ where: { id: card.id }, select: { stageId: true } });
       if (now && now.stageId !== stage.id) {
         // The original's pipeline has no stage with this name: move just this card.
         const order = ((await tx.lead.aggregate({ where: { stageId: stage.id }, _max: { order: true } }))._max.order ?? -1) + 1;
         await tx.lead.update({ where: { id: card.id }, data: { stageId: stage.id, order } });
-        if (!viaRoot) await recordStageEvent(tx, { leadId: card.id, toStageId: stage.id, fromStageName: card.stage.name, actor: session.email });
+        if (!viaRoot) noteOutreach(await recordStageEvent(tx, { leadId: card.id, toStageId: stage.id, fromStageName: card.stage.name, actor: session.email }));
         moved++;
       } else if (viaRoot || card.stageId !== stage.id) {
         moved++;
@@ -53,5 +63,9 @@ export async function POST(request: NextRequest) {
   after(async () => {
     for (const rootId of roots) await relabelLeadThreads(rootId).catch((err) => console.error("relabel failed", rootId, err));
   });
-  return NextResponse.json({ moved, stageName: stage.name });
+  return NextResponse.json({
+    moved,
+    stageName: stage.name,
+    outreach: outreachEventIds.length > 0 ? { eventIds: outreachEventIds, channels: parseChannels(Array.from(autoChannels)) } : null,
+  });
 }

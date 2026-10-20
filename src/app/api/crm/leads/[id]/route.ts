@@ -71,19 +71,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  const lead = await prisma.$transaction(async (tx) => {
+  const { lead, event } = await prisma.$transaction(async (tx) => {
     const before = data.stageId
       ? await tx.lead.findUnique({ where: { id }, select: { stageId: true, stage: { select: { name: true } } } })
       : null;
     const updated = await tx.lead.update({ where: { id }, data });
-    if (before && data.stageId && before.stageId !== data.stageId) {
-      await recordStageEvent(tx, { leadId: id, toStageId: data.stageId, fromStageName: before.stage.name, actor: session.email });
-    }
-    return updated;
+    const event =
+      before && data.stageId && before.stageId !== data.stageId
+        ? await recordStageEvent(tx, { leadId: id, toStageId: data.stageId, fromStageName: before.stage.name, actor: session.email })
+        : null;
+    return { lead: updated, event };
   });
   // Keep the lead's Gmail thread labels in step with its new stage.
   if (data.stageId) after(() => relabelLeadThreads(lead.sourceLeadId ?? lead.id));
-  return NextResponse.json({ lead });
+  // A move into a Contacted stage: the board asks which channel(s) were used.
+  const outreach = event?.contacted ? { eventIds: [event.id], channels: event.channels } : null;
+  return NextResponse.json({ lead, outreach });
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

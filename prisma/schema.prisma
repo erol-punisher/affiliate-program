@@ -366,6 +366,11 @@ model Lead {
   socialsUrl       String? // "URL of Socials"
   closingDate      DateTime?
 
+  // Every channel this affiliate has been reached out on ("email" | "instagram" |
+  // "linkedin" | "other"), kept in step with its outreach events on the
+  // original and all its copies, so cards can show them without a lookup.
+  outreachChannels String[] @default([])
+
   stageId String
   stage   Stage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
@@ -378,7 +383,8 @@ model Lead {
   @@index([stageId])
 }
 
-// One row per stage change (or initial placement) of a CRM lead, so weekly
+// One row per stage change (or initial placement) of a CRM lead, or per logged
+// DM that didn't change the stage (kind "touch"), so weekly
 // outreach numbers can be counted by when things happened rather than where
 // leads sit today. Stage and pipeline names are copied in so history survives
 // renames and deletions. rootLeadId is the original lead (sourceLeadId ?? id),
@@ -394,6 +400,10 @@ model LeadStageEvent {
   fromStageName String?
   toStageName   String
   actor         String?
+  // "stage" (a stage change) | "touch" (a DM logged without moving; counts as contacted)
+  kind          String   @default("stage")
+  // How the lead was reached, for moves into a Contacted stage and touches.
+  channels      String[] @default([])
 
   createdAt DateTime @default(now())
 

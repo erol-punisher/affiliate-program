@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import {
   OUTREACH_TARGETS_KEY,
   averagePerWeek,
+  contactedChannelsByWeek,
   contactedLeadIdsByWeek,
   parseTargets,
   weeklyOutreachStats,
@@ -14,7 +15,7 @@ const MAX_WEEKS = 26;
 // patchy (backfilled from reach-out dates), so it's kept but not shown.
 const REPORTING_START = new Date("2026-10-12T00:00:00Z");
 
-// Weekly outreach numbers (contacted incl. follow-ups / responded),
+// Weekly outreach numbers (contacted incl. follow-ups and logged DMs / responded, with channels),
 // counted from LeadStageEvent history, plus the editable weekly targets.
 export async function GET(request: NextRequest) {
   const session = await getSessionWithFreshToken();
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
 
   const [events, setting, pipelines] = await Promise.all([
     prisma.leadStageEvent.findMany({
-      select: { rootLeadId: true, pipelineName: true, toStageName: true, createdAt: true },
+      select: { rootLeadId: true, pipelineName: true, toStageName: true, createdAt: true, kind: true, channels: true },
       orderBy: { createdAt: "asc" },
     }),
     prisma.appSetting.findUnique({ where: { key: OUTREACH_TARGETS_KEY } }),
@@ -56,6 +57,7 @@ export async function GET(request: NextRequest) {
   // Who was reached out to in each shown week: Name (Country) - pipeline - owner.
   const shownWeeks = new Set(weeks.map((w) => w.weekStart));
   const idsByWeek = contactedLeadIdsByWeek(events, pipeline);
+  const channelsByWeek = contactedChannelsByWeek(events, pipeline);
   const ids = new Set<string>();
   for (const [week, set] of idsByWeek) if (shownWeeks.has(week)) set.forEach((id) => ids.add(id));
   const leads = await prisma.lead.findMany({
@@ -63,18 +65,30 @@ export async function GET(request: NextRequest) {
     select: { id: true, name: true, country: true, owner: true, stage: { select: { pipeline: { select: { name: true } } } } },
   });
   const leadById = new Map(leads.map((l) => [l.id, l]));
-  const contactedByWeek: Record<string, { id: string; name: string; country: string | null; pipeline: string; owner: string | null }[]> = {};
+  type ContactedLead = { id: string; name: string; country: string | null; pipeline: string; owner: string | null; channels: string[] };
+  const contactedByWeek: Record<string, ContactedLead[]> = {};
+  const channelCounts: Record<string, Record<string, number>> = {};
   for (const week of shownWeeks) {
+    const channels = channelsByWeek.get(week);
+    if (channels) channelCounts[week] = channels.counts;
     contactedByWeek[week] = Array.from(idsByWeek.get(week) ?? [])
       .map((id) => leadById.get(id))
       .filter((l) => l !== undefined)
-      .map((l) => ({ id: l.id, name: l.name, country: l.country, pipeline: l.stage.pipeline.name, owner: l.owner }))
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        country: l.country,
+        pipeline: l.stage.pipeline.name,
+        owner: l.owner,
+        channels: channels?.byLead.get(l.id) ?? [],
+      }))
       .sort((a, b) => a.pipeline.localeCompare(b.pipeline) || a.name.localeCompare(b.name));
   }
 
   return NextResponse.json({
     weeks,
     contactedByWeek,
+    channelCounts,
     averages,
     targets: parseTargets(setting?.value),
     targetsUpdatedBy: setting?.updatedBy ?? null,

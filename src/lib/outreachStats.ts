@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { mergeChannels, parseChannels, type OutreachChannel } from "@/lib/outreachChannels";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -15,6 +16,8 @@ export type StageEventLite = {
   pipelineName: string;
   toStageName: string;
   createdAt: Date;
+  kind?: string; // "stage" (default) | "touch"
+  channels?: string[];
 };
 
 export type WeekStats = {
@@ -31,6 +34,11 @@ export function classifyStage(stageName: string): Kind[] {
   if (name === "contacted" || /^contacted \(\d+\)$/.test(name)) return ["contacted"];
   if (name.startsWith("responded")) return ["responded"];
   return [];
+}
+
+/** Which weekly bucket(s) an event counts towards: a logged DM ("touch") always counts as contacted. */
+export function classifyEvent(e: Pick<StageEventLite, "toStageName" | "kind">): Kind[] {
+  return e.kind === "touch" ? ["contacted"] : classifyStage(e.toStageName);
 }
 
 /** Monday 00:00 UTC of the week containing `date`. */
@@ -50,7 +58,7 @@ export function weeklyOutreachStats(events: StageEventLite[], from: Date, now: D
   for (const e of events) {
     if (pipelineName && e.pipelineName !== pipelineName) continue;
     const week = weekStart(e.createdAt).toISOString().slice(0, 10);
-    for (const kind of classifyStage(e.toStageName)) {
+    for (const kind of classifyEvent(e)) {
       const key = `${week}|${kind}`;
       if (!seen.has(key)) seen.set(key, new Set());
       seen.get(key)!.add(e.rootLeadId);
@@ -75,12 +83,47 @@ export function contactedLeadIdsByWeek(events: StageEventLite[], pipelineName?: 
   const byWeek = new Map<string, Set<string>>();
   for (const e of events) {
     if (pipelineName && e.pipelineName !== pipelineName) continue;
-    if (!classifyStage(e.toStageName).includes("contacted")) continue;
+    if (!classifyEvent(e).includes("contacted")) continue;
     const week = weekStart(e.createdAt).toISOString().slice(0, 10);
     if (!byWeek.has(week)) byWeek.set(week, new Set());
     byWeek.get(week)!.add(e.rootLeadId);
   }
   return byWeek;
+}
+
+export type ChannelCounts = Record<OutreachChannel | "untagged", number>;
+
+/**
+ * For each week: how many affiliates were contacted on each channel (one affiliate on two
+ * channels counts in both, so these can add up to more than the contacted total), plus the
+ * channels each affiliate was contacted on that week.
+ */
+export function contactedChannelsByWeek(
+  events: StageEventLite[],
+  pipelineName?: string,
+): Map<string, { counts: ChannelCounts; byLead: Map<string, OutreachChannel[]> }> {
+  const raw = new Map<string, Map<string, string[]>>(); // week -> rootLeadId -> channels
+  for (const e of events) {
+    if (pipelineName && e.pipelineName !== pipelineName) continue;
+    if (!classifyEvent(e).includes("contacted")) continue;
+    const week = weekStart(e.createdAt).toISOString().slice(0, 10);
+    if (!raw.has(week)) raw.set(week, new Map());
+    const leads = raw.get(week)!;
+    leads.set(e.rootLeadId, [...(leads.get(e.rootLeadId) ?? []), ...(e.channels ?? [])]);
+  }
+  const out = new Map<string, { counts: ChannelCounts; byLead: Map<string, OutreachChannel[]> }>();
+  for (const [week, leads] of raw) {
+    const counts: ChannelCounts = { email: 0, instagram: 0, linkedin: 0, other: 0, untagged: 0 };
+    const byLead = new Map<string, OutreachChannel[]>();
+    for (const [id, list] of leads) {
+      const channels = mergeChannels(list);
+      byLead.set(id, channels);
+      if (channels.length === 0) counts.untagged++;
+      for (const c of channels) counts[c]++;
+    }
+    out.set(week, { counts, byLead });
+  }
+  return out;
 }
 
 /** Average per week over the given weeks (rounded to 1 decimal), or null if there are none. */
@@ -100,27 +143,102 @@ export function parseTargets(value: string | null | undefined): OutreachTargets 
   }
 }
 
+// A move into a Contacted stage this soon after a dashboard email is tagged as email automatically.
+const EMAIL_TAG_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+async function emailedRecently(db: Prisma.TransactionClient, rootLeadId: string): Promise<boolean> {
+  const send = await db.emailSend.findFirst({
+    where: { leadId: rootLeadId, sentAt: { gte: new Date(Date.now() - EMAIL_TAG_WINDOW_MS) } },
+    select: { id: true },
+  });
+  return send !== null;
+}
+
 /**
  * Records that `leadId` entered `toStageId` (from `fromStageName`, or null for a
  * newly created lead). Call inside the same transaction as the stage change.
+ * A move into a Contacted stage gets the given channels, plus email if the
+ * affiliate was emailed from the dashboard in the last few days.
  */
 export async function recordStageEvent(
   db: Prisma.TransactionClient,
-  args: { leadId: string; toStageId: string; fromStageName: string | null; actor: string | null },
-) {
+  args: { leadId: string; toStageId: string; fromStageName: string | null; actor: string | null; channels?: OutreachChannel[] },
+): Promise<{ id: string; contacted: boolean; channels: OutreachChannel[] } | null> {
   const [lead, stage] = await Promise.all([
     db.lead.findUnique({ where: { id: args.leadId }, select: { sourceLeadId: true } }),
     db.stage.findUnique({ where: { id: args.toStageId }, select: { name: true, pipeline: { select: { name: true } } } }),
   ]);
-  if (!lead || !stage) return;
-  await db.leadStageEvent.create({
+  if (!lead || !stage) return null;
+  const rootLeadId = lead.sourceLeadId ?? args.leadId;
+  const contacted = classifyStage(stage.name).includes("contacted");
+  const channels = contacted
+    ? mergeChannels(args.channels ?? [], args.fromStageName !== null && (await emailedRecently(db, rootLeadId)) ? ["email"] : [])
+    : [];
+  const event = await db.leadStageEvent.create({
     data: {
       leadId: args.leadId,
-      rootLeadId: lead.sourceLeadId ?? args.leadId,
+      rootLeadId,
       pipelineName: stage.pipeline.name,
       fromStageName: args.fromStageName,
       toStageName: stage.name,
       actor: args.actor,
+      channels,
     },
+    select: { id: true },
   });
+  if (channels.length > 0) await syncLeadChannels(db, [rootLeadId]);
+  return { id: event.id, contacted, channels };
+}
+
+/** Logs a DM (or other reach-out) that didn't change the lead's stage. Counts as contacted that week. */
+export async function recordTouch(
+  db: Prisma.TransactionClient,
+  args: { leadId: string; channels: OutreachChannel[]; actor: string },
+): Promise<{ id: string } | null> {
+  const lead = await db.lead.findUnique({
+    where: { id: args.leadId },
+    select: { sourceLeadId: true, stage: { select: { name: true, pipeline: { select: { name: true } } } } },
+  });
+  if (!lead) return null;
+  const rootLeadId = lead.sourceLeadId ?? args.leadId;
+  const event = await db.leadStageEvent.create({
+    data: {
+      leadId: args.leadId,
+      rootLeadId,
+      pipelineName: lead.stage.pipeline.name,
+      fromStageName: lead.stage.name,
+      toStageName: lead.stage.name,
+      actor: args.actor,
+      kind: "touch",
+      channels: args.channels,
+    },
+    select: { id: true },
+  });
+  await syncLeadChannels(db, [rootLeadId]);
+  return event;
+}
+
+/** Sets the channels of outreach events (moves into Contacted, or touches) and refreshes their leads. */
+export async function setEventChannels(db: Prisma.TransactionClient, eventIds: string[], channels: OutreachChannel[]): Promise<number> {
+  const events = await db.leadStageEvent.findMany({
+    where: { id: { in: eventIds } },
+    select: { id: true, rootLeadId: true, toStageName: true, kind: true },
+  });
+  const outreach = events.filter((e) => classifyEvent(e).includes("contacted"));
+  if (outreach.length === 0) return 0;
+  await db.leadStageEvent.updateMany({ where: { id: { in: outreach.map((e) => e.id) } }, data: { channels } });
+  await syncLeadChannels(db, Array.from(new Set(outreach.map((e) => e.rootLeadId))));
+  return outreach.length;
+}
+
+/** Recomputes each affiliate's outreachChannels from its events, on the original and every copy. */
+export async function syncLeadChannels(db: Prisma.TransactionClient, rootLeadIds: string[]) {
+  for (const rootLeadId of rootLeadIds) {
+    const events = await db.leadStageEvent.findMany({ where: { rootLeadId }, select: { channels: true } });
+    const channels = parseChannels(events.flatMap((e) => e.channels));
+    await db.lead.updateMany({
+      where: { OR: [{ id: rootLeadId }, { sourceLeadId: rootLeadId }] },
+      data: { outreachChannels: channels },
+    });
+  }
 }
