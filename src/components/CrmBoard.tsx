@@ -162,6 +162,7 @@ export function CrmBoard({ userEmail }: Props) {
   const [channelPrompt, setChannelPrompt] = useState<ChannelPrompt | null>(null);
   const [channelBusy, setChannelBusy] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
+  const [outreachVersion, setOutreachVersion] = useState(0);
 
   const [composeFor, setComposeFor] = useState<EmailRecipient[] | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
@@ -329,6 +330,7 @@ export function CrmBoard({ userEmail }: Props) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed (${res.status})`);
       rememberChannels(channels);
+      setOutreachVersion((v) => v + 1);
       if (channelPrompt.mode === "log") {
         const via = channels.map((c) => CHANNEL_LABELS[c]).join(" + ");
         setBulkNotice(`Logged ${via} reach-out to ${channelPrompt.lead.name} — counts towards this week`);
@@ -573,7 +575,10 @@ export function CrmBoard({ userEmail }: Props) {
       const data = await res.json().catch(() => ({}));
       const targetName = activePipeline?.stages.find((s) => s.id === targetStageId)?.name ?? "Contacted";
       askChannels(data.outreach ?? null, `${lead.name} → ${targetName}`);
-      if (data.outreach?.channels?.length) await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
+      if (data.outreach?.channels?.length) {
+        setOutreachVersion((v) => v + 1);
+        await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
+      }
     } catch {
       setLoadError("Failed to move card — reloading");
       await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
@@ -1604,6 +1609,8 @@ export function CrmBoard({ userEmail }: Props) {
             setViewingLead(null);
           }}
           onChangeStage={(stageId) => void changeViewingLeadStage(stageId)}
+          outreachVersion={outreachVersion}
+          onOutreachChanged={() => void loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined)}
         />
       )}
 

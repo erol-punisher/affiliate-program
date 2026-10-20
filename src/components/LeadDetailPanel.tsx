@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon, CheckIcon, PencilIcon, UsersIcon, XIcon } from "@/components/icons";
+import { LeadOutreachSection } from "@/components/LeadOutreachSection";
 
 export type LeadDetail = {
   id: string;
@@ -34,6 +35,9 @@ type Props = {
   onClose: () => void;
   onEdit: () => void;
   onChangeStage: (stageId: string) => void;
+  // Bumped by the board when this lead's channels change elsewhere (e.g. the "Reached via?" bar).
+  outreachVersion: number;
+  onOutreachChanged: () => void;
 };
 
 function formatDate(value: string | null): string {
@@ -134,7 +138,7 @@ function StageStepper({
   );
 }
 
-export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose, onEdit, onChangeStage }: Props) {
+export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose, onEdit, onChangeStage, outreachVersion, onOutreachChanged }: Props) {
   const currentStage = stages.find((s) => s.id === lead.stageId);
 
   return (
@@ -231,6 +235,7 @@ export function LeadDetailPanel({ lead, groupName, pipelineName, stages, onClose
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          <LeadOutreachSection leadId={lead.id} version={outreachVersion} onChanged={onOutreachChanged} />
           <EmailHistory leadId={lead.id} />
         </div>
       </div>
