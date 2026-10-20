@@ -114,7 +114,7 @@ export function contactedChannelsByWeek(
   }
   const out = new Map<string, { counts: ChannelCounts; byLead: Map<string, OutreachChannel[]> }>();
   for (const [week, leads] of raw) {
-    const counts: ChannelCounts = { email: 0, instagram: 0, linkedin: 0, other: 0, untagged: 0 };
+    const counts: ChannelCounts = { email: 0, instagram: 0, linkedin: 0, whatsapp: 0, other: 0, untagged: 0 };
     const byLead = new Map<string, OutreachChannel[]>();
     for (const [id, list] of leads) {
       const channels = mergeChannels(list);

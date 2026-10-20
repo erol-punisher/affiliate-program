@@ -23,6 +23,15 @@ export function LinkedInIcon({ className }: IconProps) {
   );
 }
 
+export function WhatsAppIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.5 11.8a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.35-4.4A8.4 8.4 0 1 1 20.5 11.8z" />
+      <path d="M9.1 8.4c.2-.4.5-.5.8-.5h.5c.2 0 .4.1.5.4l.7 1.6c.1.3 0 .5-.1.7l-.5.6c.6 1.2 1.6 2.2 2.8 2.8l.6-.5c.2-.2.5-.2.7-.1l1.6.7c.3.1.4.3.4.5v.5c0 .3-.1.6-.5.8-.6.4-1.5.5-2.5.1a8.2 8.2 0 0 1-4.7-4.7c-.4-1-.3-1.9.1-2.5z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function EnvelopeIcon({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -54,6 +63,7 @@ export function ChannelIcon({ channel, className }: { channel: OutreachChannel; 
   if (channel === "email") return <EnvelopeIcon className={className} />;
   if (channel === "instagram") return <InstagramIcon className={className} />;
   if (channel === "linkedin") return <LinkedInIcon className={className} />;
+  if (channel === "whatsapp") return <WhatsAppIcon className={className} />;
   return <DotsIcon className={className} />;
 }
 
@@ -73,6 +83,11 @@ export const CHANNEL_STYLE: Record<OutreachChannel, { badge: string; chip: strin
     badge: "bg-[#0A66C2]/25 text-[#70b5f9] ring-[#0A66C2]/50",
     chip: "border-[#0A66C2] bg-[#0A66C2]/30 text-blue-100",
     bar: "bg-[#0A66C2]",
+  },
+  whatsapp: {
+    badge: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
+    chip: "border-emerald-400/60 bg-emerald-500/20 text-emerald-100",
+    bar: "bg-[#25D366]",
   },
   other: {
     badge: "bg-white/10 text-zinc-300 ring-white/15",
@@ -117,7 +132,7 @@ export function rememberChannels(channels: OutreachChannel[]) {
 }
 
 /**
- * A floating bar asking which channel(s) were used. Several can be picked; 1–4 toggle them,
+ * A floating bar asking which channel(s) were used. Several can be picked; 1–5 toggle them,
  * Enter confirms, Esc skips.
  */
 export function ChannelPicker({

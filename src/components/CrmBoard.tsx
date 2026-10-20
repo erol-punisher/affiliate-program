@@ -12,13 +12,14 @@ import { LeadQuickViewPanel, type EditableLeadField } from "@/components/LeadQui
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PIPELINE_CATEGORIES } from "@/lib/pipelineCategory";
 import { nextOutreachStage } from "@/lib/outreachStages";
-import { CHANNEL_LABELS, profileHref, socialPlatform, type OutreachChannel } from "@/lib/outreachChannels";
+import { CHANNEL_LABELS, profileHref, socialPlatform, whatsappHref, type OutreachChannel } from "@/lib/outreachChannels";
 import {
   ChannelBadges,
   ChannelPicker,
   ChatIcon,
   InstagramIcon,
   LinkedInIcon,
+  WhatsAppIcon,
   lastUsedChannels,
   rememberChannels,
 } from "@/components/OutreachChannels";
@@ -1355,13 +1356,14 @@ export function CrmBoard({ userEmail }: Props) {
                             </div>
                             <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/lead:opacity-100">
                               <ProfileLink lead={lead} onOpen={(platform) => askLogDm(lead, platform)} />
+                              <WhatsAppLink lead={lead} onOpen={() => askLogDm(lead, "whatsapp")} />
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   askLogDm(lead);
                                 }}
-                                title="Log a DM (Instagram, LinkedIn…)"
+                                title="Log a DM (Instagram, LinkedIn, WhatsApp…)"
                                 className="text-zinc-500 transition-colors hover:text-zinc-200"
                               >
                                 <ChatIcon className="h-3.5 w-3.5" />
@@ -1765,7 +1767,9 @@ function ProfileLink({ lead, onOpen }: { lead: Lead; onOpen: (platform: Outreach
   const href = profileHref(lead.socialsUrl);
   const platform = socialPlatform(lead.socialsUrl);
   if (!href || !platform) return null;
-  const label = platform === "other" ? "Open profile" : `Open ${CHANNEL_LABELS[platform]} profile`;
+  // A WhatsApp link in the socials field is covered by WhatsAppLink when the number field is set.
+  if (platform === "whatsapp" && whatsappHref(lead.whatsapp)) return null;
+  const label = platform === "other" ? "Open profile" : `Open ${CHANNEL_LABELS[platform]} ${platform === "whatsapp" ? "chat" : "profile"}`;
   return (
     <a
       href={href}
@@ -1781,6 +1785,8 @@ function ProfileLink({ lead, onOpen }: { lead: Lead; onOpen: (platform: Outreach
     >
       {platform === "instagram" ? (
         <InstagramIcon className="h-3.5 w-3.5" />
+      ) : platform === "whatsapp" ? (
+        <WhatsAppIcon className="h-3.5 w-3.5" />
       ) : platform === "linkedin" ? (
         <LinkedInIcon className="h-3.5 w-3.5" />
       ) : (
@@ -1788,6 +1794,28 @@ function ProfileLink({ lead, onOpen }: { lead: Lead; onOpen: (platform: Outreach
           <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
         </svg>
       )}
+    </a>
+  );
+}
+
+/** Opens a WhatsApp chat with the lead's number, then offers to log the message. */
+function WhatsAppLink({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
+  const href = whatsappHref(lead.whatsapp);
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      draggable={false}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      title="Open WhatsApp chat (then log the message)"
+      className="text-zinc-500 transition-colors hover:text-zinc-200"
+    >
+      <WhatsAppIcon className="h-3.5 w-3.5" />
     </a>
   );
 }

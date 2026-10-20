@@ -1,12 +1,13 @@
 // How a lead was reached out to (safe to import in the browser).
 
-export const OUTREACH_CHANNELS = ["email", "instagram", "linkedin", "other"] as const;
+export const OUTREACH_CHANNELS = ["email", "instagram", "linkedin", "whatsapp", "other"] as const;
 export type OutreachChannel = (typeof OUTREACH_CHANNELS)[number];
 
 export const CHANNEL_LABELS: Record<OutreachChannel, string> = {
   email: "Email",
   instagram: "Instagram",
   linkedin: "LinkedIn",
+  whatsapp: "WhatsApp",
   other: "Other",
 };
 
@@ -23,7 +24,7 @@ export function mergeChannels(...lists: readonly string[][]): OutreachChannel[] 
 }
 
 /** The platform a socials URL points at, for the open-profile shortcut. */
-export function socialPlatform(url: string | null | undefined): "instagram" | "linkedin" | "other" | null {
+export function socialPlatform(url: string | null | undefined): "instagram" | "linkedin" | "whatsapp" | "other" | null {
   const trimmed = url?.trim();
   if (!trimmed) return null;
   const host = (() => {
@@ -36,7 +37,17 @@ export function socialPlatform(url: string | null | undefined): "instagram" | "l
   if (!host) return null;
   if (host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am") return "instagram";
   if (host === "linkedin.com" || host.endsWith(".linkedin.com") || host === "lnkd.in") return "linkedin";
+  if (host === "wa.me" || host.endsWith(".whatsapp.com")) return "whatsapp";
   return "other";
+}
+
+/** A wa.me chat link for a WhatsApp number (any formatting, international), or null if it isn't one. */
+export function whatsappHref(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\/(wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\//i.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/^00/, "").replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 ? `https://wa.me/${digits}` : null;
 }
 
 /** An absolute URL for a socials field that may lack the scheme, or null if it isn't a URL. */
