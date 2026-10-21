@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import Link from "next/link";
-import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, AnalyticsIcon, MailIcon, SearchIcon, XIcon } from "@/components/icons";
+import { PlusIcon, PencilIcon, TrashIcon, EyeIcon, UploadIcon, DownloadIcon, AnalyticsIcon, MailIcon, SearchIcon, XIcon } from "@/components/icons";
 import { EmailComposeModal, type EmailRecipient } from "@/components/EmailComposeModal";
 import { CsvImportModal } from "@/components/CsvImportModal";
 import { LeadModal, type LeadFormValues, EMPTY_LEAD_FORM } from "@/components/LeadModal";
@@ -895,6 +895,15 @@ export function CrmBoard({ userEmail }: Props) {
               <UploadIcon className="h-3.5 w-3.5" />
               Import CSV
             </button>
+            <a
+              href="/api/crm/export"
+              download
+              title="Download every affiliate as a CSV in Bigin's column format"
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:bg-white/5"
+            >
+              <DownloadIcon className="h-3.5 w-3.5" />
+              Export for Bigin
+            </a>
           </div>
         </div>
 
