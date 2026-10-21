@@ -4,7 +4,6 @@ import { prisma } from "@/lib/db";
 import { moveLeadWithCopies } from "@/lib/crmMoves";
 import { recordStageEvent } from "@/lib/outreachStats";
 import { relabelLeadThreads } from "@/lib/emailOutreach";
-import { parseChannels } from "@/lib/outreachChannels";
 
 const MAX_LEADS = 200;
 
@@ -33,11 +32,11 @@ export async function POST(request: NextRequest) {
   let moved = 0;
   // Moves into a Contacted stage, so the board can ask which channel(s) were used.
   const outreachEventIds: string[] = [];
-  const autoChannels = new Set<string>();
+  let emailed = 0;
   const noteOutreach = (event: Awaited<ReturnType<typeof recordStageEvent>>) => {
     if (!event?.contacted) return;
     outreachEventIds.push(event.id);
-    event.channels.forEach((c) => autoChannels.add(c));
+    if (event.emailed) emailed++;
   };
   for (const card of cards) {
     const rootId = card.sourceLeadId ?? card.id;
@@ -66,6 +65,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     moved,
     stageName: stage.name,
-    outreach: outreachEventIds.length > 0 ? { eventIds: outreachEventIds, channels: parseChannels(Array.from(autoChannels)) } : null,
+    outreach: outreachEventIds.length > 0 ? { eventIds: outreachEventIds, channels: [], emailed: emailed > 0 } : null,
   });
 }

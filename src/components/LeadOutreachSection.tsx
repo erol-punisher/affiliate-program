@@ -21,7 +21,7 @@ function shortDate(iso: string): string {
 
 function describe(e: OutreachEvent): string {
   const when = new Date(e.createdAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  const what = e.kind === "touch" ? "Logged as a DM" : `Moved to ${e.toStageName}`;
+  const what = e.actor?.startsWith("email-send:") ? "Email sent from the dashboard" : e.kind === "touch" ? "Logged as a DM" : `Moved to ${e.toStageName}`;
   return `${what} · ${when}${e.actor && !e.actor.includes(":") ? ` · ${e.actor}` : ""}`;
 }
 

@@ -53,7 +53,7 @@ type ChannelPrompt =
   | { mode: "tag"; key: number; eventIds: string[]; title: string; initial: OutreachChannel[]; autoEmail: boolean }
   | { mode: "log"; key: number; lead: Lead; initial: OutreachChannel[] };
 
-type OutreachInfo = { eventIds: string[]; channels: OutreachChannel[] } | null;
+type OutreachInfo = { eventIds: string[]; channels: OutreachChannel[]; emailed?: boolean } | null;
 
 type Stage = {
   id: string;
@@ -291,17 +291,20 @@ export function CrmBoard({ userEmail }: Props) {
     }
   }
 
-  /** After a move into a Contacted stage: ask which channel(s) were used (email is pre-ticked if it was emailed). */
+  /**
+   * After a move into a Contacted stage: ask which channel(s) were used. If the leads were just emailed
+   * from the dashboard, that email is already logged, so nothing is pre-ticked and the bar only asks for extras.
+   */
   function askChannels(outreach: OutreachInfo, title: string) {
     if (!outreach || outreach.eventIds.length === 0) return;
-    const autoEmail = outreach.channels.includes("email");
+    const autoEmail = !!outreach.emailed;
     setChannelError(null);
     setChannelPrompt({
       mode: "tag",
       key: Date.now(),
       eventIds: outreach.eventIds,
       title,
-      initial: outreach.channels.length > 0 ? outreach.channels : lastUsedChannels(),
+      initial: autoEmail ? [] : outreach.channels.length > 0 ? outreach.channels : lastUsedChannels(),
       autoEmail,
     });
   }
@@ -576,7 +579,7 @@ export function CrmBoard({ userEmail }: Props) {
       const data = await res.json().catch(() => ({}));
       const targetName = activePipeline?.stages.find((s) => s.id === targetStageId)?.name ?? "Contacted";
       askChannels(data.outreach ?? null, `${lead.name} → ${targetName}`);
-      if (data.outreach?.channels?.length) {
+      if (data.outreach?.channels?.length || data.outreach?.emailed) {
         setOutreachVersion((v) => v + 1);
         await loadGroups(activeGroupId ?? undefined, activePipelineId ?? undefined);
       }
@@ -1481,7 +1484,7 @@ export function CrmBoard({ userEmail }: Props) {
                   Reached via? <span className="font-normal text-zinc-400">{channelPrompt.title}</span>
                 </>
               }
-              hint={channelPrompt.autoEmail ? "Email ticked: emailed from the dashboard. Add any DMs too." : "Pick all that apply"}
+              hint={channelPrompt.autoEmail ? "The email is already logged from the send. Tick any DMs too, or skip." : "Pick all that apply"}
               initial={channelPrompt.initial}
               confirmLabel="Save"
               busy={channelBusy}

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { analyzeThread, crmLabelName, gmailAccessToken, sendGmail, setThreadCrmLabel } from "@/lib/gmail";
 import { movesOnReply, moveLeadWithCopies, revertReplyMove } from "@/lib/crmMoves";
+import { recordTouch } from "@/lib/outreachStats";
 import { missingVariables, renderTemplate } from "@/lib/emailTemplate";
 import { LOGO_CID, brandedToPlainText, buttonsToPlainText, renderBrandedEmail, renderPlainEmail, sanitizeColors, type EmailColors } from "@/lib/emailHtml";
 import { getSignature, signatureToText } from "@/lib/emailSignature";
@@ -301,6 +302,11 @@ export async function sendOutreachEmails(args: {
       await prisma.emailSend.create({
         data: { threadId: thread.id, ownerEmail: args.senderEmail, leadId, templateStepId: args.templateStepId ?? null, sentAt: now },
       });
+      // Every dashboard email is an email reach-out in its own right (weekly numbers, card icons,
+      // the lead's email steps), whether or not the lead is moved on the board afterwards.
+      await recordTouch(prisma, { leadId, channels: ["email"], actor: `email-send:${args.senderEmail}` }).catch((err) =>
+        console.error("outreach log failed", leadId, err),
+      );
       const label = () => setThreadCrmLabel(token, args.senderEmail, sent.threadId, labelName).catch((err) => console.error("label failed", err));
       if (args.defer) args.defer(label);
       else await label();

@@ -85,7 +85,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   // Keep the lead's Gmail thread labels in step with its new stage.
   if (data.stageId) after(() => relabelLeadThreads(lead.sourceLeadId ?? lead.id));
   // A move into a Contacted stage: the board asks which channel(s) were used.
-  const outreach = event?.contacted ? { eventIds: [event.id], channels: event.channels } : null;
+  const outreach = event?.contacted ? { eventIds: [event.id], channels: event.channels, emailed: event.emailed } : null;
   return NextResponse.json({ lead, outreach });
 }
 

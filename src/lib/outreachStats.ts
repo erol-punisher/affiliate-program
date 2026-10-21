@@ -144,7 +144,8 @@ export function parseTargets(value: string | null | undefined): OutreachTargets 
   }
 }
 
-// A move into a Contacted stage this soon after a dashboard email is tagged as email automatically.
+// A move into a Contacted stage this soon after a dashboard email is flagged as following that email
+// (the send itself is already logged as an email reach-out, so the move isn't tagged email again).
 const EMAIL_TAG_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 async function emailedRecently(db: Prisma.TransactionClient, rootLeadId: string): Promise<boolean> {
@@ -158,13 +159,13 @@ async function emailedRecently(db: Prisma.TransactionClient, rootLeadId: string)
 /**
  * Records that `leadId` entered `toStageId` (from `fromStageName`, or null for a
  * newly created lead). Call inside the same transaction as the stage change.
- * A move into a Contacted stage gets the given channels, plus email if the
- * affiliate was emailed from the dashboard in the last few days.
+ * A move into a Contacted stage gets the given channels; `emailed` says whether
+ * the affiliate was emailed from the dashboard in the last few days.
  */
 export async function recordStageEvent(
   db: Prisma.TransactionClient,
   args: { leadId: string; toStageId: string; fromStageName: string | null; actor: string | null; channels?: OutreachChannel[] },
-): Promise<{ id: string; contacted: boolean; channels: OutreachChannel[] } | null> {
+): Promise<{ id: string; contacted: boolean; channels: OutreachChannel[]; emailed: boolean } | null> {
   const [lead, stage] = await Promise.all([
     db.lead.findUnique({ where: { id: args.leadId }, select: { sourceLeadId: true } }),
     db.stage.findUnique({ where: { id: args.toStageId }, select: { name: true, pipeline: { select: { name: true } } } }),
@@ -172,9 +173,8 @@ export async function recordStageEvent(
   if (!lead || !stage) return null;
   const rootLeadId = lead.sourceLeadId ?? args.leadId;
   const contacted = classifyStage(stage.name).includes("contacted");
-  const channels = contacted
-    ? mergeChannels(args.channels ?? [], args.fromStageName !== null && (await emailedRecently(db, rootLeadId)) ? ["email"] : [])
-    : [];
+  const channels = contacted ? mergeChannels(args.channels ?? []) : [];
+  const emailed = contacted && args.fromStageName !== null && (await emailedRecently(db, rootLeadId));
   const event = await db.leadStageEvent.create({
     data: {
       leadId: args.leadId,
@@ -188,7 +188,7 @@ export async function recordStageEvent(
     select: { id: true },
   });
   if (channels.length > 0) await syncLeadChannels(db, [rootLeadId]);
-  return { id: event.id, contacted, channels };
+  return { id: event.id, contacted, channels, emailed };
 }
 
 /** Logs a DM (or other reach-out) that didn't change the lead's stage. Counts as contacted that week. */
