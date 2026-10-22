@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithFreshToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { parseChannels } from "@/lib/outreachChannels";
-import { syncLeadChannels } from "@/lib/outreachStats";
+import { classifyEvent, setResponseChannels, syncLeadChannels } from "@/lib/outreachStats";
 
 async function rootIdOf(id: string): Promise<string | null> {
   const lead = await prisma.lead.findUnique({ where: { id }, select: { sourceLeadId: true } });
@@ -25,7 +25,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     select: { id: true, kind: true, toStageName: true, channels: true, actor: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
-  return NextResponse.json({ events });
+  // A response's channels say how they replied, not a reach-out step.
+  return NextResponse.json({ events: events.filter((e) => classifyEvent(e).includes("contacted")) });
 }
 
 // Undoes one channel of one reach-out: ?eventId=…&channel=…. A logged DM left with no channel is removed.
@@ -49,5 +50,24 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     else await tx.leadStageEvent.update({ where: { id: event.id }, data: { channels } });
     await syncLeadChannels(tx, [rootLeadId]);
   });
+  return NextResponse.json({ ok: true });
+}
+
+// Sets which channel(s) the affiliate responded with interest on: { responseChannels }.
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSessionWithFreshToken();
+  if (!session) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const rootLeadId = await rootIdOf((await params).id);
+  const body = await request.json().catch(() => null);
+  if (!rootLeadId || !Array.isArray(body?.responseChannels)) {
+    return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  }
+  const ok = await prisma.$transaction((tx) => setResponseChannels(tx, rootLeadId, parseChannels(body.responseChannels)));
+  if (!ok) {
+    return NextResponse.json({ error: "This affiliate hasn't responded with interest" }, { status: 404 });
+  }
   return NextResponse.json({ ok: true });
 }

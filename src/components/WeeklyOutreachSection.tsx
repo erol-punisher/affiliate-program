@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type KeyboardEvent } from "react";
 import { CHANNEL_LABELS, OUTREACH_CHANNELS, type OutreachChannel } from "@/lib/outreachChannels";
 import { CHANNEL_STYLE, ChannelBadges, ChannelIcon } from "@/components/OutreachChannels";
 
@@ -12,6 +12,7 @@ type ChannelCounts = Record<OutreachChannel | "untagged", number>;
 type OutreachData = {
   weeks: Week[];
   contactedByWeek: Record<string, ContactedLead[]>;
+  respondedByWeek: Record<string, ContactedLead[]>;
   channelCounts: Record<string, ChannelCounts>;
   averages: Averages;
   targets: Targets;
@@ -83,6 +84,80 @@ function ChannelCountsInline({ counts }: { counts: ChannelCounts | undefined }) 
   );
 }
 
+/**
+ * Who responded with interest this week and the channel(s) each response came through.
+ * Clicking a channel turns it on or off for that affiliate.
+ */
+function RespondedList({ leads, onChange }: { leads: ContactedLead[]; onChange: (id: string, channels: string[]) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function toggle(lead: ContactedLead, channel: OutreachChannel) {
+    const next = lead.channels.includes(channel) ? lead.channels.filter((c) => c !== channel) : [...lead.channels, channel];
+    setBusy(lead.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/crm/leads/${lead.id}/outreach`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ responseChannels: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Failed (${res.status})`);
+      }
+      onChange(lead.id, next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/[0.08] bg-[#10141f] px-5 py-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Responded with interest this week · responded via</p>
+      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      {leads.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-500">No responses with interest yet this week.</p>
+      ) : (
+        <ol className="mt-2 flex flex-col divide-y divide-white/[0.04]">
+          {leads.map((l) => (
+            <li key={l.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 py-2 text-sm">
+              <span className="min-w-0">
+                <span className="text-zinc-100">{l.name}</span>
+                {l.country && <span className="text-zinc-500"> ({l.country})</span>}
+                <span className="text-xs text-zinc-500"> · {l.pipeline}</span>
+              </span>
+              <span className={`flex items-center gap-1.5 ${busy === l.id ? "opacity-50" : ""}`}>
+                {OUTREACH_CHANNELS.map((c) => {
+                  const on = l.channels.includes(c);
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      disabled={busy === l.id}
+                      onClick={() => void toggle(l, c)}
+                      title={on ? `Responded via ${CHANNEL_LABELS[c]} (click to remove)` : `Mark as responded via ${CHANNEL_LABELS[c]}`}
+                      aria-pressed={on}
+                      className={`inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 transition-opacity ${
+                        on ? CHANNEL_STYLE[c].badge : "text-zinc-600 ring-white/10 opacity-50 hover:opacity-100"
+                      }`}
+                    >
+                      <ChannelIcon channel={c} className="h-3.5 w-3.5" />
+                    </button>
+                  );
+                })}
+                {l.channels.length === 0 && <span className="ml-1 text-xs text-zinc-600">Pick a channel</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function TargetCell({ value, target }: { value: number; target: number }) {
   const hit = target > 0 && value >= target;
   return (
@@ -101,6 +176,7 @@ export function WeeklyOutreachSection() {
   const [draft, setDraft] = useState<Targets | null>(null);
   const [saving, setSaving] = useState(false);
   const [openWeek, setOpenWeek] = useState<string | null>(null);
+  const [showResponded, setShowResponded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +218,14 @@ export function WeeklyOutreachSection() {
 
   const thisWeek = data?.weeks[0];
 
+  function setResponseChannels(leadId: string, channels: string[]) {
+    setData((prev) => {
+      if (!prev || !thisWeek) return prev;
+      const list = (prev.respondedByWeek[thisWeek.weekStart] ?? []).map((l) => (l.id === leadId ? { ...l, channels } : l));
+      return { ...prev, respondedByWeek: { ...prev.respondedByWeek, [thisWeek.weekStart]: list } };
+    });
+  }
+
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -179,8 +263,29 @@ export function WeeklyOutreachSection() {
               // Without a target the contacted bar is just the channel split of this week's total.
               const progress = m.hasTarget ? (target > 0 ? Math.min(100, (value / target) * 100) : 0) : value > 0 ? 100 : 0;
               const hit = target > 0 && value >= target;
+              const clickable = m.key === "responded";
               return (
-                <div key={m.key} className="rounded-2xl border border-white/[0.08] bg-[#10141f] px-5 py-4" title={m.hint}>
+                <div
+                  key={m.key}
+                  className={`rounded-2xl border bg-[#10141f] px-5 py-4 ${
+                    clickable
+                      ? `cursor-pointer transition-colors hover:border-white/20 ${showResponded ? "border-white/20" : "border-white/[0.08]"}`
+                      : "border-white/[0.08]"
+                  }`}
+                  title={clickable ? `${m.hint}. Click to see who responded and how.` : m.hint}
+                  {...(clickable && {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-expanded": showResponded,
+                    onClick: () => setShowResponded((v) => !v),
+                    onKeyDown: (e: KeyboardEvent) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setShowResponded((v) => !v);
+                      }
+                    },
+                  })}
+                >
                   <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">{m.label} this week</p>
                   <p className="mt-1.5 text-3xl font-semibold text-zinc-100">
                     {value}
@@ -198,13 +303,33 @@ export function WeeklyOutreachSection() {
                       <ChannelCountsInline counts={data.channelCounts[thisWeek.weekStart]} />
                     </div>
                   )}
+                  {clickable && thisWeek && (data.respondedByWeek[thisWeek.weekStart]?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+                      {OUTREACH_CHANNELS.map((c) => {
+                        const n = data.respondedByWeek[thisWeek.weekStart].filter((l) => l.channels.includes(c)).length;
+                        return n > 0 ? (
+                          <span key={c} className="inline-flex items-center gap-1" title={`${n} responded via ${CHANNEL_LABELS[c]}`}>
+                            <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full ring-1 ${CHANNEL_STYLE[c].badge}`}>
+                              <ChannelIcon channel={c} className="h-2.5 w-2.5" />
+                            </span>
+                            <span className="tabular-nums text-zinc-300">{n}</span>
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
                   <p className="mt-2 text-xs text-zinc-500">
                     Avg/week: {data.averages.last4[m.key] ?? "—"} (last 4) · {data.averages.allTime[m.key] ?? "—"} (all)
+                    {clickable && <span className="ml-2 text-zinc-400">{showResponded ? "Hide list ▴" : "Show who ▾"}</span>}
                   </p>
                 </div>
               );
             })}
           </div>
+
+          {showResponded && thisWeek && (
+            <RespondedList leads={data.respondedByWeek[thisWeek.weekStart] ?? []} onChange={setResponseChannels} />
+          )}
 
           <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             {editing && draft ? (

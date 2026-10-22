@@ -7,6 +7,7 @@ import {
   contactedChannelsByWeek,
   contactedLeadIdsByWeek,
   parseTargets,
+  respondedChannelsByWeek,
   weeklyOutreachStats,
 } from "@/lib/outreachStats";
 
@@ -58,8 +59,10 @@ export async function GET(request: NextRequest) {
   const shownWeeks = new Set(weeks.map((w) => w.weekStart));
   const idsByWeek = contactedLeadIdsByWeek(events, pipeline);
   const channelsByWeek = contactedChannelsByWeek(events, pipeline);
+  const respondedByWeek = respondedChannelsByWeek(events, pipeline);
   const ids = new Set<string>();
   for (const [week, set] of idsByWeek) if (shownWeeks.has(week)) set.forEach((id) => ids.add(id));
+  for (const [week, map] of respondedByWeek) if (shownWeeks.has(week)) map.forEach((_c, id) => ids.add(id));
   const leads = await prisma.lead.findMany({
     where: { id: { in: Array.from(ids) } },
     select: { id: true, name: true, country: true, owner: true, stage: { select: { pipeline: { select: { name: true } } } } },
@@ -67,6 +70,8 @@ export async function GET(request: NextRequest) {
   const leadById = new Map(leads.map((l) => [l.id, l]));
   type ContactedLead = { id: string; name: string; country: string | null; pipeline: string; owner: string | null; channels: string[] };
   const contactedByWeek: Record<string, ContactedLead[]> = {};
+  // Who responded with interest each week, with the channel(s) they responded on.
+  const respondedLeadsByWeek: Record<string, ContactedLead[]> = {};
   const channelCounts: Record<string, Record<string, number>> = {};
   for (const week of shownWeeks) {
     const channels = channelsByWeek.get(week);
@@ -83,11 +88,25 @@ export async function GET(request: NextRequest) {
         channels: channels?.byLead.get(l.id) ?? [],
       }))
       .sort((a, b) => a.pipeline.localeCompare(b.pipeline) || a.name.localeCompare(b.name));
+    const responded = respondedByWeek.get(week);
+    respondedLeadsByWeek[week] = Array.from(responded?.keys() ?? [])
+      .map((id) => leadById.get(id))
+      .filter((l) => l !== undefined)
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        country: l.country,
+        pipeline: l.stage.pipeline.name,
+        owner: l.owner,
+        channels: responded?.get(l.id) ?? [],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   return NextResponse.json({
     weeks,
     contactedByWeek,
+    respondedByWeek: respondedLeadsByWeek,
     channelCounts,
     averages,
     targets: parseTargets(setting?.value),

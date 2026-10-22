@@ -127,6 +127,37 @@ export function contactedChannelsByWeek(
   return out;
 }
 
+/**
+ * For each week: the affiliates who responded with interest, with the channel(s) they responded
+ * on. A move into a Responded with Interest stage keeps that in its `channels`.
+ */
+export function respondedChannelsByWeek(events: StageEventLite[], pipelineName?: string): Map<string, Map<string, OutreachChannel[]>> {
+  const out = new Map<string, Map<string, OutreachChannel[]>>(); // week -> rootLeadId -> channels
+  for (const e of events) {
+    if (pipelineName && e.pipelineName !== pipelineName) continue;
+    if (!classifyEvent(e).includes("responded")) continue;
+    const week = weekStart(e.createdAt).toISOString().slice(0, 10);
+    if (!out.has(week)) out.set(week, new Map());
+    const leads = out.get(week)!;
+    leads.set(e.rootLeadId, mergeChannels(leads.get(e.rootLeadId) ?? [], e.channels ?? []));
+  }
+  return out;
+}
+
+/** Sets which channel(s) an affiliate responded with interest on: their latest move into Responded with Interest. */
+export async function setResponseChannels(db: Prisma.TransactionClient, rootLeadId: string, channels: OutreachChannel[]): Promise<boolean> {
+  const events = await db.leadStageEvent.findMany({
+    where: { rootLeadId, kind: "stage" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, toStageName: true, kind: true },
+  });
+  const latest = events.find((e) => classifyEvent(e).includes("responded"));
+  if (!latest) return false;
+  await db.leadStageEvent.update({ where: { id: latest.id }, data: { channels } });
+  await syncLeadChannels(db, [rootLeadId]);
+  return true;
+}
+
 /** Average per week over the given weeks (rounded to 1 decimal), or null if there are none. */
 export function averagePerWeek(weeks: WeekStats[], field: keyof Omit<WeekStats, "weekStart">): number | null {
   if (weeks.length === 0) return null;

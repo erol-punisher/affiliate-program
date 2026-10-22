@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { averagePerWeek, classifyStage, parseTargets, weekStart, weeklyOutreachStats } from "../outreachStats";
+import { averagePerWeek, classifyStage, parseTargets, respondedChannelsByWeek, weekStart, weeklyOutreachStats } from "../outreachStats";
 
 const ev = (rootLeadId: string, toStageName: string, iso: string, pipelineName = "EuroAffiliates ReachOut") => ({
   rootLeadId,
@@ -69,5 +69,18 @@ describe("averagePerWeek / parseTargets", () => {
     expect(averagePerWeek([], "contacted")).toBeNull();
     expect(parseTargets('{"contacted":30,"responded":-1}')).toEqual({ contacted: 30, responded: 2 });
     expect(parseTargets("not json")).toEqual({ contacted: 20, responded: 2 });
+  });
+});
+
+describe("respondedChannelsByWeek", () => {
+  it("lists each week's responders with the channels they responded on", () => {
+    const at = new Date("2026-10-21T10:00:00Z");
+    const weeks = respondedChannelsByWeek([
+      { rootLeadId: "a", pipelineName: "P", toStageName: "Responded with Interest", createdAt: at, channels: ["email"] },
+      { rootLeadId: "b", pipelineName: "P", toStageName: "Responded with Interest - For a Fee", createdAt: at, channels: [] },
+      { rootLeadId: "c", pipelineName: "P", toStageName: "Contacted", createdAt: at, channels: ["instagram"] },
+      { rootLeadId: "d", pipelineName: "Q", toStageName: "Responded with Interest", createdAt: at, channels: ["instagram"] },
+    ], "P");
+    expect(Object.fromEntries(weeks.get("2026-10-19")!)).toEqual({ a: ["email"], b: [] });
   });
 });
